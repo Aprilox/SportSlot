@@ -1,0 +1,5964 @@
+"use client"
+
+import type React from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import dynamic from "next/dynamic"
+import { useRouter } from "next/navigation"
+import { useTranslation } from "react-i18next"
+import LanguageSwitcher from "@/components/LanguageSwitcher"
+import { SUPPORTED_LANGUAGES } from "@/lib/i18n"
+import type {
+  DateSelectArg,
+  DatesSetArg,
+  EventClickArg,
+  EventContentArg,
+  EventDropArg,
+} from "@fullcalendar/core"
+
+// Type pour le resize d'événement (compatible avec FullCalendar)
+interface EventResizeInfo {
+  event: {
+    id: string
+    start: Date | null
+    end: Date | null
+    extendedProps?: Record<string, unknown>
+  }
+  revert: () => void
+}
+import dayGridPlugin from "@fullcalendar/daygrid"
+import interactionPlugin from "@fullcalendar/interaction"
+import timeGridPlugin from "@fullcalendar/timegrid"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Trophy,
+  Plus,
+  Calendar,
+  Users,
+  DollarSign,
+  LogOut,
+  Edit,
+  Trash2,
+  ToggleLeft,
+  ToggleRight,
+  ChevronLeft,
+  ChevronRight,
+  Eraser,
+  Building2,
+  Palette,
+  Mail,
+  Phone,
+  MapPin,
+  Key,
+  Eye,
+  EyeOff,
+  Shield,
+  Database,
+  HardDrive,
+  Upload,
+  Link,
+  X,
+  Image as ImageIcon,
+  Move,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react"
+import {
+  isAuthenticated,
+  setAuthenticated,
+  getSports,
+  saveSports,
+  getSlots,
+  saveSlots,
+  getSettings,
+  saveSettings,
+  getAdminCredentials,
+  saveAdminCredentials,
+  getBookings,
+  incrementDataVersion,
+  publishAllSlots,
+  hasUnpublishedSlots,
+  findSlotsOutsideWorkingHours,
+  updateSlotsWorkingHoursStatus,
+  isSlotWithinWorkingHours,
+  getPendingDeletionCount,
+  getUnpublishedClosuresCount,
+  getPendingClosureDeletionCount,
+  saveBookings,
+  type Sport,
+  type TimeSlot,
+  type ClosedPeriod,
+  type BrandingSettings,
+  type AdminCredentials,
+  type WorkingHours,
+  type Booking,
+} from "@/lib/storage"
+
+const FullCalendar = dynamic(() => import("@fullcalendar/react"), {
+  ssr: false,
+}) as typeof import("@fullcalendar/react").default
+
+export default function AdminPage() {
+  const { t, i18n } = useTranslation()
+  const router = useRouter()
+  const [isPageLoading, setIsPageLoading] = useState(true)
+  const [sports, setSports] = useState<Sport[]>([])
+  const [slots, setSlots] = useState<TimeSlot[]>([])
+  const [bookings, setBookings] = useState<Booking[]>([])
+  const [settings, setSettingsState] = useState(getSettings())
+  const [editableWorkingHours, setEditableWorkingHours] = useState<WorkingHours[]>(getSettings().workingHours)
+  const [isSportDialogOpen, setIsSportDialogOpen] = useState(false)
+  const [isVacationDialogOpen, setIsVacationDialogOpen] = useState(false)
+  const [editingSport, setEditingSport] = useState<Sport | null>(null)
+  const [calendarView, setCalendarView] = useState<"timeGridWeek" | "dayGridMonth">("timeGridWeek")
+  const [calendarTitle, setCalendarTitle] = useState("")
+  const [calendarDate, setCalendarDate] = useState<Date>(new Date())
+  const [calendarMeta, setCalendarMeta] = useState<{
+    type: string
+    currentStart: Date
+    currentEnd: Date
+  } | null>(null)
+  const [selectedSportFilter, setSelectedSportFilter] = useState<string>("all")
+
+  const [editingSlot, setEditingSlot] = useState<TimeSlot | null>(null)
+  const [isSlotDialogOpen, setIsSlotDialogOpen] = useState(false)
+  const [slotForm, setSlotForm] = useState({
+    sportIds: [] as string[],
+    maxCapacity: 4,
+    price: 50,
+    duration: 60,
+  })
+
+  const [activeTab, setActiveTab] = useState("agenda")
+  
+  // Mode de l'agenda : "view" pour consulter, "edit" pour modifier
+  const [agendaMode, setAgendaMode] = useState<"view" | "edit">("view")
+  
+  // Mode d'édition : "slot" pour créer des créneaux, "closure" pour créer des fermetures
+  const [editMode, setEditMode] = useState<"slot" | "closure" | "eraser">("slot")
+  
+  // État pour le mode gomme "peinture" (maintenir clic pour effacer en glissant)
+  const [isErasing, setIsErasing] = useState(false)
+  const [isRightClicking, setIsRightClicking] = useState(false) // Clic droit pour désélectionner
+  
+  // Modal de détails de réservation (mode vue)
+  const [bookingDetailsModal, setBookingDetailsModal] = useState<{
+    isOpen: boolean
+    slot: TimeSlot | null
+    bookings: Booking[]
+  }>({ isOpen: false, slot: null, bookings: [] })
+  
+  // État pour le test SMTP
+  const [smtpTestStatus, setSmtpTestStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle')
+  const [smtpPasswordInput, setSmtpPasswordInput] = useState<string>('')
+  
+  // Notifications pour les nouvelles réservations
+  const [notifications, setNotifications] = useState<Array<{
+    id: string
+    type: 'booking'
+    message: string
+    details: string
+    timestamp: Date
+  }>>([])
+  const [lastBookingsCount, setLastBookingsCount] = useState<number>(0)
+
+  // État pour les credentials admin
+  const [adminCredentials, setAdminCredentials] = useState<AdminCredentials>(getAdminCredentials())
+  
+  // États pour la gestion du logo
+  const [logoInputMode, setLogoInputMode] = useState<"url" | "upload">("url")
+  const [isLogoCropperOpen, setIsLogoCropperOpen] = useState(false)
+  const [cropImageSrc, setCropImageSrc] = useState<string>("")
+  const [cropPosition, setCropPosition] = useState({ x: 0, y: 0 })
+  const [cropZoom, setCropZoom] = useState(1)
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const [imageNaturalSize, setImageNaturalSize] = useState({ width: 0, height: 0 })
+  const [logoUrlInput, setLogoUrlInput] = useState("")
+  const [isLoadingLogoUrl, setIsLoadingLogoUrl] = useState(false)
+  const logoFileInputRef = useRef<HTMLInputElement>(null)
+  const cropperRef = useRef<HTMLDivElement>(null)
+  const cropImageRef = useRef<HTMLImageElement>(null)
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+    showCurrent: false,
+    showNew: false,
+    showConfirm: false,
+  })
+  const [passwordError, setPasswordError] = useState("")
+  const [passwordSuccess, setPasswordSuccess] = useState("")
+
+  // État pour le mode de stockage (browser, local, external)
+  const [storageMode, setStorageMode] = useState<{
+    mode: 'browser' | 'local' | 'external' | 'checking'
+    label: string
+    icon: string
+    color: string
+  }>({ mode: 'checking', label: '', icon: '', color: '' })
+  
+  // État pour le dialog de fermeture simple (un seul jour)
+  const [closureDialog, setClosureDialog] = useState<{
+    isOpen: boolean
+    date: string
+    reason: string
+    hasSlots: boolean
+    slotsCount: number
+    bookingsCount: number
+  } | null>(null)
+  
+  // État pour l'édition rapide inline
+  const [quickEdit, setQuickEdit] = useState<{
+    slotId: string
+    field: "price" | "capacity" | "duration" | "sports" | "delete"
+    value: string
+    position: { x: number; y: number }
+    selectedSports?: string[]
+  } | null>(null)
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      router.push("/admin/login")
+    } else {
+      setSports(getSports())
+      setSlots(getSlots())
+      setBookings(getBookings())
+      
+      // Migration : s'assurer que branding existe dans les settings
+      const currentSettings = getSettings()
+      if (!currentSettings.branding) {
+        const updatedSettings = {
+          ...currentSettings,
+          branding: {
+            siteName: "SportSlot",
+            siteDescription: "Réservez votre créneau sportif",
+            siteTitle: "Réservation de créneaux sportifs",
+            logoUrl: "",
+            logoOriginalUrl: "",
+            logoIcon: "🏆",
+            logoBackground: true,
+            primaryColor: "#3b82f6",
+            currency: "CHF",
+            currencySymbol: ".-",
+            defaultLanguage: "fr",
+            contactEmail: "",
+            contactPhone: "",
+            address: "",
+          }
+        }
+        setSettingsState(updatedSettings)
+        saveSettings(updatedSettings)
+      }
+
+      // Détecter le mode de stockage
+      fetch('/api/config')
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            setStorageMode({
+              mode: data.mode,
+              label: i18n.language === 'en' ? data.labelEn : data.label,
+              icon: data.icon,
+              color: data.color
+            })
+          } else {
+            setStorageMode({ mode: 'browser', label: 'Navigateur', icon: '🌐', color: '#f59e0b' })
+          }
+        })
+        .catch(() => setStorageMode({ mode: 'browser', label: 'Navigateur', icon: '🌐', color: '#f59e0b' }))
+      
+      // Fin du chargement
+      setIsPageLoading(false)
+    }
+  }, [router])
+
+  // Synchronisation en temps réel des réservations et créneaux avec notifications
+  useEffect(() => {
+    const handleBookingsChanged = () => {
+      const newBookings = getBookings()
+      const previousCount = bookings.length
+      
+      // Détecter les nouvelles réservations
+      if (newBookings.length > previousCount) {
+        const newOnes = newBookings.slice(previousCount)
+        newOnes.forEach(booking => {
+          const notification = {
+            id: `notif-${Date.now()}-${Math.random()}`,
+            type: 'booking' as const,
+            message: `🎉 Nouvelle réservation!`,
+            details: `${booking.customerName} - ${booking.sportName} - ${booking.numberOfPeople} pers.`,
+            timestamp: new Date()
+          }
+          setNotifications(prev => [notification, ...prev].slice(0, 5))
+          
+          // Jouer un son de notification (optionnel)
+          try {
+            const audio = new Audio('data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU')
+          } catch {}
+        })
+      }
+      
+      setBookings(newBookings)
+    }
+    
+    const handleSlotsChanged = () => {
+      setSlots(getSlots())
+    }
+    
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'sportslot_bookings') {
+        handleBookingsChanged()
+      }
+      if (e.key === 'sportslot_slots') {
+        setSlots(getSlots())
+      }
+    }
+    
+    window.addEventListener('bookingsChanged', handleBookingsChanged)
+    window.addEventListener('slotsChanged', handleSlotsChanged)
+    window.addEventListener('storage', handleStorageChange)
+    
+    return () => {
+      window.removeEventListener('bookingsChanged', handleBookingsChanged)
+      window.removeEventListener('slotsChanged', handleSlotsChanged)
+      window.removeEventListener('storage', handleStorageChange)
+    }
+  }, [bookings.length])
+
+  // Gérer le wheel event avec passive: false pour empêcher le scroll
+  useEffect(() => {
+    const cropper = cropperRef.current
+    if (!cropper || !isLogoCropperOpen) return
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const delta = e.deltaY > 0 ? -0.1 : 0.1
+      setCropZoom(z => Math.max(0.5, Math.min(3, z + delta)))
+    }
+
+    cropper.addEventListener('wheel', handleWheel, { passive: false })
+    return () => cropper.removeEventListener('wheel', handleWheel)
+  }, [isLogoCropperOpen])
+
+  // Auto-supprimer les notifications après 8 secondes
+  useEffect(() => {
+    if (notifications.length === 0) return
+    
+    const timer = setTimeout(() => {
+      setNotifications(prev => prev.slice(0, -1))
+    }, 8000)
+    
+    return () => clearTimeout(timer)
+  }, [notifications])
+
+  const [sportForm, setSportForm] = useState({
+    name: "",
+    icon: "⚽",
+    imageUrl: "",
+  })
+
+  const [vacationForm, setVacationForm] = useState({
+    startDate: "",
+    endDate: "",
+    reason: "",
+  })
+
+  // État pour le dialog de génération avancée de créneaux
+  const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false)
+  const [generateForm, setGenerateForm] = useState({
+    startDate: "",
+    endDate: "",
+    duration: 60,
+    sportIds: [] as string[],
+    maxCapacity: 4,
+    price: 50,
+    hasLunchBreak: false,
+    lunchBreakStart: "12:00",
+    lunchBreakEnd: "14:00",
+  })
+
+  const handleLogout = () => {
+    setAuthenticated(false)
+    router.push("/")
+  }
+
+  // Helper pour formater une date en YYYY-MM-DD (timezone local)
+  const formatDateLocal = (d: Date) => {
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  // Ouvrir le dialog de génération avec les valeurs par défaut
+  const openGenerateDialog = () => {
+    const today = new Date()
+    const nextWeek = new Date()
+    nextWeek.setDate(today.getDate() + 7)
+    
+    setGenerateForm({
+      startDate: formatDateLocal(today),
+      endDate: formatDateLocal(nextWeek),
+      duration: settings.defaultSlotDuration,
+      sportIds: sports.filter(s => s.enabled).map(s => s.id),
+      maxCapacity: settings.defaultMaxCapacity,
+      price: settings.defaultPrice,
+      hasLunchBreak: false,
+      lunchBreakStart: "12:00",
+      lunchBreakEnd: "14:00",
+    })
+    setIsGenerateDialogOpen(true)
+  }
+
+  // Générer les créneaux avec les paramètres avancés
+  const generateSlotsAdvanced = () => {
+    if (!generateForm.startDate || !generateForm.endDate) {
+      alert(t('admin.generate.selectDates'))
+      return
+    }
+    if (generateForm.sportIds.length === 0) {
+      alert(t('admin.generate.selectAtLeastOneSport'))
+      return
+    }
+
+    const startDate = new Date(generateForm.startDate + "T00:00:00")
+    const endDate = new Date(generateForm.endDate + "T23:59:59")
+
+    const newSlots: TimeSlot[] = []
+
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const dayOfWeek = d.getDay()
+      const dateStr = formatDateLocal(d)
+
+      // Vérifier si le jour est fermé
+      const isClosed = settings.closedPeriods.some((period) => {
+        return dateStr >= period.startDate && dateStr <= period.endDate
+      })
+      if (isClosed) continue
+
+      // Vérifier les horaires de travail pour ce jour
+      const workingHour = settings.workingHours.find((wh) => wh.dayOfWeek === dayOfWeek)
+      if (!workingHour || !workingHour.enabled) continue
+
+      const [startHour, startMin] = workingHour.startTime.split(":").map(Number)
+      const [endHour, endMin] = workingHour.endTime.split(":").map(Number)
+
+      const dayStartMinutes = startHour * 60 + startMin
+      const dayEndMinutes = endHour * 60 + endMin
+
+      // Préparer la pause midi si activée
+      let lunchStartMinutes = 0
+      let lunchEndMinutes = 0
+      if (generateForm.hasLunchBreak) {
+        const [lunchStartH, lunchStartM] = generateForm.lunchBreakStart.split(":").map(Number)
+        const [lunchEndH, lunchEndM] = generateForm.lunchBreakEnd.split(":").map(Number)
+        lunchStartMinutes = lunchStartH * 60 + lunchStartM
+        lunchEndMinutes = lunchEndH * 60 + lunchEndM
+      }
+
+      // Créer un créneau par slot de temps (pas par sport)
+      for (let time = dayStartMinutes; time + generateForm.duration <= dayEndMinutes; time += generateForm.duration) {
+        // Vérifier si le créneau est pendant la pause midi
+        if (generateForm.hasLunchBreak) {
+          const slotEnd = time + generateForm.duration
+          // Si le créneau chevauche la pause midi, on le saute
+          if (time < lunchEndMinutes && slotEnd > lunchStartMinutes) {
+            continue
+          }
+        }
+
+        const hours = Math.floor(time / 60)
+        const mins = time % 60
+        const timeStr = `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`
+
+        // Vérifier si un créneau existe déjà à cette heure
+        const exists = slots.some((s) => s.date === dateStr && s.time === timeStr)
+
+        if (!exists) {
+          newSlots.push({
+            id: `${Date.now()}-${Math.random()}`,
+            sportId: generateForm.sportIds[0], // Legacy
+            sportIds: generateForm.sportIds,
+            date: dateStr,
+            time: timeStr,
+            duration: generateForm.duration,
+            maxCapacity: generateForm.maxCapacity,
+            currentBookings: 0,
+            price: generateForm.price,
+            published: false, // Nouveau créneau = brouillon (orange)
+          })
+        }
+      }
+    }
+
+    if (newSlots.length > 0) {
+      const updatedSlots = [...slots, ...newSlots]
+      setSlots(updatedSlots)
+      saveSlots(updatedSlots)
+      setIsGenerateDialogOpen(false)
+      alert(`${newSlots.length} ${t('admin.generate.success')}`)
+    } else {
+      alert(t('admin.generate.noSlots'))
+    }
+  }
+
+  const handleSportSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (editingSport) {
+      const updatedSports = sports.map((sport) => (sport.id === editingSport.id ? { ...sport, ...sportForm } : sport))
+      setSports(updatedSports)
+      saveSports(updatedSports)
+      incrementDataVersion() // Notifier le client
+    } else {
+      const newSport: Sport = {
+        id: Date.now().toString(),
+        ...sportForm,
+        enabled: true,
+      }
+      const updatedSports = [...sports, newSport]
+      setSports(updatedSports)
+      saveSports(updatedSports)
+      incrementDataVersion() // Notifier le client
+    }
+
+    setSportForm({ name: "", icon: "⚽", imageUrl: "" })
+    setEditingSport(null)
+    setIsSportDialogOpen(false)
+  }
+
+  const handleEditSport = (sport: Sport) => {
+    setEditingSport(sport)
+    setSportForm({
+      name: sport.name,
+      icon: sport.icon,
+      imageUrl: sport.imageUrl || "",
+    })
+    setIsSportDialogOpen(true)
+  }
+
+  const handleDeleteSport = (sportId: string) => {
+    const sportToDelete = sports.find(s => s.id === sportId)
+    if (!sportToDelete) return
+
+    // Trouver tous les créneaux qui utilisent ce sport
+    const affectedSlots = slots.filter(slot => {
+      const slotSportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
+      return slotSportIds.includes(sportId)
+    })
+
+    // Créneaux qui n'ont QUE ce sport (seront supprimés)
+    const slotsToDelete = affectedSlots.filter(slot => {
+      const slotSportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
+      return slotSportIds.length === 1
+    })
+
+    // Créneaux qui ont plusieurs sports (le sport sera retiré)
+    const slotsToUpdate = affectedSlots.filter(slot => {
+      const slotSportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
+      return slotSportIds.length > 1
+    })
+
+    // Message de confirmation détaillé
+    let confirmMessage = `${t('admin.sports.deleteConfirm')}\n\n"${sportToDelete.name}" ${sportToDelete.icon}\n`
+    
+    if (affectedSlots.length > 0) {
+      confirmMessage += `\n⚠️ ${t('admin.sports.deleteWarning') || 'Attention'} :\n`
+      if (slotsToDelete.length > 0) {
+        confirmMessage += `• ${slotsToDelete.length} ${slotsToDelete.length > 1 ? t('home.slot.slots') : t('home.slot.slot')} ${t('admin.sports.willBeDeleted') || 'seront supprimés'}\n`
+      }
+      if (slotsToUpdate.length > 0) {
+        confirmMessage += `• ${slotsToUpdate.length} ${slotsToUpdate.length > 1 ? t('home.slot.slots') : t('home.slot.slot')} ${t('admin.sports.willBeUpdated') || 'seront mis à jour'}\n`
+      }
+    }
+
+    if (confirm(confirmMessage)) {
+      // Supprimer le sport
+      const updatedSports = sports.filter((s) => s.id !== sportId)
+      setSports(updatedSports)
+      saveSports(updatedSports)
+
+      // Mettre à jour les créneaux
+      const updatedSlots = slots
+        // Filtrer les créneaux à supprimer (ceux qui n'ont que ce sport)
+        .filter(slot => {
+          const slotSportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
+          if (slotSportIds.includes(sportId) && slotSportIds.length === 1) {
+            return false // Supprimer ce créneau
+          }
+          return true
+        })
+        // Retirer le sport des créneaux multi-sports
+        .map(slot => {
+          const slotSportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
+          if (slotSportIds.includes(sportId)) {
+            return {
+              ...slot,
+              sportIds: slotSportIds.filter(id => id !== sportId),
+              sportId: undefined
+            }
+          }
+          return slot
+        })
+
+      setSlots(updatedSlots)
+      saveSlots(updatedSlots)
+
+      // Incrémenter la version pour synchronisation client
+      incrementDataVersion()
+    }
+  }
+
+  // Vérifier si les horaires de travail ont été modifiés
+  const hasWorkingHoursChanged = useMemo(() => {
+    return JSON.stringify(editableWorkingHours) !== JSON.stringify(settings.workingHours)
+  }, [editableWorkingHours, settings.workingHours])
+
+  // Réinitialiser les horaires éditables aux valeurs sauvegardées
+  const resetWorkingHours = () => {
+    setEditableWorkingHours(settings.workingHours)
+  }
+
+  // Sauvegarder les modifications d'horaires de travail avec vérification des créneaux affectés
+  const saveWorkingHours = () => {
+    // Trouver les créneaux qui seront hors horaires avec les nouveaux paramètres
+    const affectedSlots = findSlotsOutsideWorkingHours(slots, editableWorkingHours)
+    
+    // Filtrer les créneaux déjà marqués comme hors horaires (pas de changement pour eux)
+    const newlyAffectedSlots = affectedSlots.filter(slot => slot.outsideWorkingHours !== true)
+    
+    if (newlyAffectedSlots.length > 0) {
+      // Afficher une popup de confirmation
+      const confirmMessage = `⚠️ ${t('admin.settings.workingHoursWarning') || 'Attention'} !\n\n` +
+        `${newlyAffectedSlots.length} ${newlyAffectedSlots.length > 1 ? t('home.slot.slots') : t('home.slot.slot')} ` +
+        `${t('admin.settings.slotsOutsideHours') || 'seront hors des nouveaux horaires'}.\n\n` +
+        `${t('admin.settings.slotsWillBeRed') || 'Ces créneaux apparaîtront en rouge dans votre agenda et seront invisibles pour les clients'}.\n\n` +
+        `${t('common.confirm')} ?`
+      
+      if (!confirm(confirmMessage)) {
+        return // L'admin a annulé
+      }
+    }
+    
+    // Sauvegarder les nouveaux horaires
+    const newSettings = { ...settings, workingHours: editableWorkingHours }
+    setSettingsState(newSettings)
+    saveSettings(newSettings)
+    
+    // Mettre à jour le statut des créneaux
+    const updatedCount = updateSlotsWorkingHoursStatus(editableWorkingHours)
+    if (updatedCount > 0) {
+      // Recharger les créneaux depuis le storage
+      setSlots(getSlots())
+    }
+  }
+
+  // Gérer les modifications d'horaires de travail (pour le toggle jour uniquement)
+  const handleWorkingHoursChange = (newWorkingHours: WorkingHours[]) => {
+    setEditableWorkingHours(newWorkingHours)
+  }
+
+  const toggleSport = (sportId: string) => {
+    const updatedSports = sports.map((sport) => (sport.id === sportId ? { ...sport, enabled: !sport.enabled } : sport))
+    setSports(updatedSports)
+    saveSports(updatedSports)
+    incrementDataVersion() // Notifier le client
+  }
+
+  const handleAddVacation = (e: React.FormEvent) => {
+    e.preventDefault()
+    const newVacation: ClosedPeriod = {
+      id: Date.now().toString(),
+      ...vacationForm,
+      published: false, // Non publié par défaut - nécessite confirmation
+    }
+    const updatedSettings = {
+      ...settings,
+      closedPeriods: [...settings.closedPeriods, newVacation],
+    }
+    setSettingsState(updatedSettings)
+    saveSettings(updatedSettings)
+    setVacationForm({ startDate: "", endDate: "", reason: "" })
+    setIsVacationDialogOpen(false)
+  }
+
+  const handleDeleteVacation = (id: string) => {
+    const updatedSettings = {
+      ...settings,
+      closedPeriods: settings.closedPeriods.filter((v) => v.id !== id),
+    }
+    setSettingsState(updatedSettings)
+    saveSettings(updatedSettings)
+  }
+
+  const handleDeleteSlot = (slotId: string, skipConfirm = false) => {
+    if (skipConfirm || confirm(t('admin.slots.deleteConfirm'))) {
+      const updatedSlots = slots.filter((s) => s.id !== slotId)
+      setSlots(updatedSlots)
+      saveSlots(updatedSlots)
+    }
+  }
+
+  // Marquer un slot pour suppression (utilisé par la gomme)
+  // NOTE: On ne modifie PAS published - le créneau reste visible côté client jusqu'à confirmation
+  const handleMarkForDeletion = (slotId: string) => {
+    const updatedSlots = slots.map(slot => 
+      slot.id === slotId 
+        ? { ...slot, pendingDeletion: true }
+        : slot
+    )
+    setSlots(updatedSlots)
+    saveSlots(updatedSlots)
+    // Pas d'incrementDataVersion - le client ne doit pas voir le changement
+  }
+
+  // Annuler la suppression d'un slot
+  const handleCancelDeletion = (slotId: string) => {
+    const updatedSlots = slots.map(slot => 
+      slot.id === slotId 
+        ? { ...slot, pendingDeletion: false }
+        : slot
+    )
+    setSlots(updatedSlots)
+    saveSlots(updatedSlots)
+    // Pas d'incrementDataVersion - le client ne doit pas voir le changement
+  }
+
+  const getSportName = (sportId: string) => {
+    const sport = sports.find((s) => s.id === sportId)
+    return sport ? sport.name : ""
+  }
+
+  // Traduire la raison de fermeture (gère les anciennes valeurs et les nouvelles clés)
+  const getClosureReasonText = (reason: string): string => {
+    // Essayer d'abord avec la clé directe
+    const directTranslation = t(`admin.closureReasons.${reason}`)
+    if (directTranslation && !directTranslation.includes('admin.closureReasons.')) {
+      return directTranslation
+    }
+    
+    // Mapper les anciennes valeurs vers les clés
+    const legacyMapping: Record<string, string> = {
+      'Fermé': 'closed',
+      'Vacances': 'vacation',
+      'Jour férié': 'holiday',
+      'Maintenance': 'maintenance',
+      'Événement privé': 'privateEvent',
+      // English
+      'Closed': 'closed',
+      'Vacation': 'vacation',
+      'Holiday': 'holiday',
+      'Private Event': 'privateEvent',
+      // German
+      'Geschlossen': 'closed',
+      'Urlaub': 'vacation',
+      'Feiertag': 'holiday',
+      'Wartung': 'maintenance',
+      'Private Veranstaltung': 'privateEvent',
+    }
+    
+    const mappedKey = legacyMapping[reason]
+    if (mappedKey) {
+      return t(`admin.closureReasons.${mappedKey}`)
+    }
+    
+    // Retourner la valeur brute si rien ne correspond
+    return reason
+  }
+
+  const getSportIcon = (sportId: string) => {
+    const sport = sports.find((s) => s.id === sportId)
+    return sport ? sport.icon : "⚽"
+  }
+
+  // Updated to handle multi-sport slots with disabled state
+  const getSportIcons = (sportIds: string[], withDisabledState = false) => {
+    return sportIds.map((id) => {
+      const sport = sports.find((s) => s.id === id)
+      if (!sport) return { icon: "❓", disabled: false }
+      if (withDisabledState) {
+        return { icon: sport.icon, disabled: !sport.enabled, name: sport.name }
+      }
+      return { icon: sport.icon, disabled: false, name: sport.name }
+    })
+  }
+
+  // Calculer les dates de début et fin de la période affichée
+  const periodDates = useMemo(() => {
+    const start = new Date(calendarDate)
+    const end = new Date(calendarDate)
+    
+    if (calendarView === "timeGridWeek") {
+      // Trouver le lundi de la semaine
+      const day = start.getDay()
+      const diff = start.getDate() - day + (day === 0 ? -6 : 1)
+      start.setDate(diff)
+      start.setHours(0, 0, 0, 0)
+      end.setDate(start.getDate() + 6)
+      end.setHours(23, 59, 59, 999)
+    } else {
+      // Premier et dernier jour du mois
+      start.setDate(1)
+      start.setHours(0, 0, 0, 0)
+      end.setMonth(end.getMonth() + 1)
+      end.setDate(0)
+      end.setHours(23, 59, 59, 999)
+    }
+    
+    return { start, end }
+  }, [calendarDate, calendarView])
+
+  // Filtrer les créneaux de la période affichée
+  const periodSlots = useMemo(() => {
+    return slots.filter((slot) => {
+      const slotDate = new Date(slot.date + "T12:00:00")
+      return slotDate >= periodDates.start && slotDate <= periodDates.end
+    })
+  }, [slots, periodDates])
+
+  // Stats dynamiques basées sur la période affichée
+  const stats = useMemo(() => {
+    const totalSlots = periodSlots.length
+    const bookedSlots = periodSlots.filter((s) => s.currentBookings > 0).length
+    const totalRevenue = periodSlots.reduce((acc, s) => acc + s.price * s.currentBookings, 0)
+    const totalCapacity = periodSlots.reduce((acc, s) => acc + s.maxCapacity, 0)
+    const totalHours = periodSlots.reduce((acc, s) => acc + s.duration / 60, 0)
+    const totalBookings = periodSlots.reduce((acc, s) => acc + s.currentBookings, 0)
+    
+    return {
+      totalSlots,
+      bookedSlots,
+      totalRevenue,
+      totalCapacity,
+      totalHours,
+      totalBookings,
+    }
+  }, [periodSlots])
+
+  // Compter les créneaux non publiés (brouillons, excluant ceux à supprimer)
+  const unpublishedCount = useMemo(() => {
+    return slots.filter(slot => slot.published === false && !slot.pendingDeletion).length
+  }, [slots])
+
+  // Compter les créneaux hors horaires
+  const outsideHoursCount = useMemo(() => {
+    return slots.filter(slot => slot.outsideWorkingHours === true && !slot.pendingDeletion).length
+  }, [slots])
+
+  // Compter les créneaux en attente de suppression
+  const pendingDeletionCount = useMemo(() => {
+    return slots.filter(slot => slot.pendingDeletion === true).length
+  }, [slots])
+
+  // Compter les fermetures non publiées (excluant celles à supprimer)
+  const unpublishedClosuresCount = useMemo(() => {
+    return settings.closedPeriods.filter(period => period.published !== true && !period.pendingDeletion).length
+  }, [settings.closedPeriods])
+
+  // Compter les fermetures en attente de suppression
+  const pendingClosureDeletionCount = useMemo(() => {
+    return settings.closedPeriods.filter(period => period.pendingDeletion === true).length
+  }, [settings.closedPeriods])
+
+  // Total des suppressions en attente
+  const totalPendingDeletions = pendingDeletionCount + pendingClosureDeletionCount
+
+  const dayNames = [
+    t('home.days.sunday'),
+    t('home.days.monday'),
+    t('home.days.tuesday'),
+    t('home.days.wednesday'),
+    t('home.days.thursday'),
+    t('home.days.friday'),
+    t('home.days.saturday')
+  ]
+
+  // Stats par jour pour la vue mois
+  const dailyStats = useMemo(() => {
+    const statsMap = new Map<string, { 
+      slots: number; 
+      hours: number; 
+      revenue: number; 
+      bookings: number; 
+      hasClosure: boolean;
+      unpublished: number; // Créneaux non publiés (orange)
+      outsideHours: number; // Créneaux hors horaires (rouge)
+      published: number; // Créneaux publiés (bleu)
+    }>()
+    
+    slots.forEach((slot) => {
+      const existing = statsMap.get(slot.date) || { 
+        slots: 0, hours: 0, revenue: 0, bookings: 0, hasClosure: false,
+        unpublished: 0, outsideHours: 0, published: 0
+      }
+      
+      // Compter selon le statut
+      let unpublished = existing.unpublished
+      let outsideHours = existing.outsideHours
+      let published = existing.published
+      
+      if (slot.outsideWorkingHours === true) {
+        outsideHours++
+      } else if (slot.published === false) {
+        unpublished++
+      } else {
+        published++
+      }
+      
+      statsMap.set(slot.date, {
+        slots: existing.slots + 1,
+        hours: existing.hours + slot.duration / 60,
+        revenue: existing.revenue + slot.price * slot.currentBookings,
+        bookings: existing.bookings + slot.currentBookings,
+        hasClosure: existing.hasClosure,
+        unpublished,
+        outsideHours,
+        published,
+      })
+    })
+    
+    // Ajouter les fermetures
+    settings.closedPeriods.forEach((period) => {
+      const start = new Date(period.startDate + "T12:00:00")
+      const end = new Date(period.endDate + "T12:00:00")
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dateStr = formatDateLocal(d)
+        const existing = statsMap.get(dateStr) || { 
+          slots: 0, hours: 0, revenue: 0, bookings: 0, hasClosure: false,
+          unpublished: 0, outsideHours: 0, published: 0
+        }
+        statsMap.set(dateStr, { ...existing, hasClosure: true })
+      }
+    })
+    
+    return statsMap
+  }, [slots, settings.closedPeriods])
+  const parseDateParts = (date: Date) => {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, "0")
+    const day = String(date.getDate()).padStart(2, "0")
+    const hours = String(date.getHours()).padStart(2, "0")
+    const minutes = String(date.getMinutes()).padStart(2, "0")
+    return {
+      date: `${year}-${month}-${day}`,
+      time: `${hours}:${minutes}`,
+    }
+  }
+
+  const timeStringToMinutes = (time: string) => {
+    const [hours, minutes] = time.split(":").map(Number)
+    return hours * 60 + minutes
+  }
+
+  const minutesToTimeString = (minutes: number) => {
+    const hours = Math.floor(minutes / 60)
+    const mins = minutes % 60
+    return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:00`
+  }
+
+  const slotMinTime = useMemo(() => {
+    const enabled = settings.workingHours.filter((wh) => wh.enabled)
+    if (!enabled.length) return "06:00:00"
+    const minMinutes = enabled.reduce((acc, wh) => Math.min(acc, timeStringToMinutes(wh.startTime)), Number.POSITIVE_INFINITY)
+    return minutesToTimeString(Number.isFinite(minMinutes) ? minMinutes : 360)
+  }, [settings.workingHours])
+
+  const slotMaxTime = useMemo(() => {
+    const enabled = settings.workingHours.filter((wh) => wh.enabled)
+    if (!enabled.length) return "22:00:00"
+    const maxMinutes = enabled.reduce((acc, wh) => Math.max(acc, timeStringToMinutes(wh.endTime)), 0)
+    return minutesToTimeString(maxMinutes)
+  }, [settings.workingHours])
+
+  const slotDurationStep = useMemo(() => {
+    // Grille fixe de 1h pour l'agenda (ne dépend pas de la durée par défaut des créneaux)
+    return minutesToTimeString(60)
+  }, [])
+
+  const filteredSlots = useMemo(() => {
+    if (selectedSportFilter === "all") return slots
+    return slots.filter((s) => (s.sportIds || [s.sportId]).includes(selectedSportFilter))
+  }, [selectedSportFilter, slots])
+
+  const calendarEvents = useMemo(() => {
+    return filteredSlots.map((slot) => {
+      const start = new Date(`${slot.date}T${slot.time}`)
+      const end = new Date(start.getTime() + slot.duration * 60000)
+      const sportLabels = getSportIcons(slot.sportIds || [slot.sportId!]).join(" ")
+      const availablePlaces = slot.maxCapacity - slot.currentBookings
+      const isFullyBooked = availablePlaces === 0
+      const isAlmostFull = availablePlaces <= slot.maxCapacity * 0.2
+      const isUnpublished = slot.published === false
+      const isOutsideWorkingHours = slot.outsideWorkingHours === true
+      const isPendingDeletion = slot.pendingDeletion === true
+
+      // Couleurs dynamiques selon le statut
+      let eventColor = "#3b82f6" // Bleu par défaut (disponible)
+      let borderColor = "#2563eb"
+      const hasBookings = slot.currentBookings > 0
+
+      if (isPendingDeletion) {
+        // Créneaux à supprimer = Rouge/rose avec pattern barré
+        eventColor = "#be123c" // Rose foncé
+        borderColor = "#9f1239" // Rose très foncé
+      } else if (isOutsideWorkingHours) {
+        // Créneaux hors horaires = Rouge vif avec bordure épaisse
+        eventColor = "#dc2626" // Rouge vif
+        borderColor = "#991b1b" // Rouge foncé
+      } else if (isUnpublished) {
+        // Créneaux non publiés = Orange vif (brouillon)
+        eventColor = "#f97316" // Orange
+        borderColor = "#ea580c"
+      } else if (isFullyBooked) {
+        eventColor = "#7f1d1d" // Rouge très foncé (complet)
+        borderColor = "#450a0a"
+      } else if (isAlmostFull) {
+        eventColor = "#eab308" // Jaune (presque complet)
+        borderColor = "#ca8a04"
+      } else if (hasBookings) {
+        // Créneaux avec réservations = Jaune/Orangé
+        eventColor = "#f59e0b" // Ambre/Orangé
+        borderColor = "#d97706"
+      } else {
+        // Bleu pour les créneaux disponibles sans réservation
+        eventColor = "#3b82f6"
+        borderColor = "#2563eb"
+      }
+
+      return {
+        id: slot.id,
+        title: sportLabels || "Créneau",
+        start,
+        end,
+        allDay: false,
+        backgroundColor: eventColor,
+        borderColor: borderColor,
+        textColor: "#ffffff",
+        extendedProps: {
+          slot,
+          type: "slot",
+          isUnpublished,
+          isOutsideWorkingHours,
+          isPendingDeletion,
+        },
+      }
+    })
+  }, [filteredSlots])
+
+  // Liste des dates fermées (format YYYY-MM-DD)
+  const closedDates = useMemo(() => {
+    const dates = new Set<string>()
+    settings.closedPeriods.forEach((period) => {
+      const start = new Date(period.startDate + "T12:00:00")
+      const end = new Date(period.endDate + "T12:00:00")
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        dates.add(formatDateLocal(d))
+      }
+    })
+    return dates
+  }, [settings.closedPeriods])
+
+  // Événements de fermeture pour le calendrier (affichage en background)
+  const closureEvents = useMemo(() => {
+    return settings.closedPeriods.flatMap((period) => {
+      const events = []
+      const start = new Date(period.startDate + "T12:00:00")
+      const end = new Date(period.endDate + "T12:00:00")
+      const isPublished = period.published === true
+      const isPendingDeletion = period.pendingDeletion === true
+      
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dateStr = formatDateLocal(d)
+        
+        // Déterminer le titre et la couleur selon le statut
+        let title = ""
+        let bgColor = ""
+        
+        if (isPendingDeletion) {
+          title = `🗑️ ${getClosureReasonText(period.reason)}`
+          bgColor = "#fce7f3" // Rose pour suppression
+        } else if (isPublished) {
+          title = `📅 ${getClosureReasonText(period.reason)}`
+          bgColor = "#fee2e2" // Rouge clair pour publié
+        } else {
+          title = `🟠 ${getClosureReasonText(period.reason)}`
+          bgColor = "#ffedd5" // Orange pour non publié
+        }
+        
+        events.push({
+          id: `closure-${period.id}-${dateStr}`,
+          title,
+          start: dateStr,
+          allDay: true,
+          display: "background",
+          backgroundColor: bgColor,
+          extendedProps: {
+            type: "closure",
+            closureId: period.id,
+            date: dateStr,
+            isPublished,
+            isPendingDeletion,
+          },
+        })
+      }
+      return events
+    })
+  }, [settings.closedPeriods])
+
+  // Événements de résumé pour la vue mois (un par jour avec stats)
+  const monthSummaryEvents = useMemo(() => {
+    if (calendarView !== "dayGridMonth") return []
+    
+    const summaryByDate = new Map<string, { slots: number; hours: number; revenue: number; bookings: number; capacity: number }>()
+    
+    slots.forEach((slot) => {
+      const existing = summaryByDate.get(slot.date) || { slots: 0, hours: 0, revenue: 0, bookings: 0, capacity: 0 }
+      summaryByDate.set(slot.date, {
+        slots: existing.slots + 1,
+        hours: existing.hours + slot.duration / 60,
+        revenue: existing.revenue + slot.price * slot.currentBookings,
+        bookings: existing.bookings + slot.currentBookings,
+        capacity: existing.capacity + slot.maxCapacity,
+      })
+    })
+    
+    return Array.from(summaryByDate.entries()).map(([date, stats]) => ({
+      id: `summary-${date}`,
+      start: date,
+      allDay: true,
+      display: "background",
+      backgroundColor: stats.bookings > 0 ? "#dcfce7" : "#f0f9ff",
+      extendedProps: {
+        type: "summary",
+        stats,
+        date,
+      },
+    }))
+  }, [slots, calendarView])
+
+  // Combiner les événements
+  const allCalendarEvents = useMemo(() => {
+    // En vue mois, on n'affiche pas les créneaux individuels, juste les résumés
+    if (calendarView === "dayGridMonth") {
+      return [...monthSummaryEvents, ...closureEvents]
+    }
+    return [...calendarEvents, ...closureEvents]
+  }, [calendarEvents, closureEvents, monthSummaryEvents])
+
+  // Configurer les heures d'ouverture pour FullCalendar (zones grisées hors ouverture)
+  const businessHours = useMemo(() => {
+    return settings.workingHours
+      .filter(wh => wh.enabled)
+      .map(wh => ({
+        daysOfWeek: [wh.dayOfWeek],
+        startTime: wh.startTime,
+        endTime: wh.endTime,
+      }))
+  }, [settings.workingHours])
+  
+  // Vérifier si une date a une fermeture
+  const isDateClosed = (dateStr: string) => {
+    return settings.closedPeriods.some(p => dateStr >= p.startDate && dateStr <= p.endDate)
+  }
+
+  // Vérifier si une date a des créneaux
+  const getDateSlots = (dateStr: string) => {
+    return slots.filter(s => s.date === dateStr)
+  }
+
+  // Supprimer la fermeture pour une date
+  const removeClosureForDate = (dateStr: string) => {
+    const existingPeriod = settings.closedPeriods.find(p => dateStr >= p.startDate && dateStr <= p.endDate)
+    if (!existingPeriod) return
+    
+    if (existingPeriod.startDate === existingPeriod.endDate) {
+      // Fermeture d'un seul jour - supprimer directement
+      const updatedSettings = {
+        ...settings,
+        closedPeriods: settings.closedPeriods.filter(p => p.id !== existingPeriod.id),
+      }
+      setSettingsState(updatedSettings)
+      saveSettings(updatedSettings)
+    } else {
+      // Période multi-jours - demander confirmation
+      if (confirm(`${t('admin.closures.deleteConfirm')} "${existingPeriod.reason}" ?`)) {
+        const updatedSettings = {
+          ...settings,
+          closedPeriods: settings.closedPeriods.filter(p => p.id !== existingPeriod.id),
+        }
+        setSettingsState(updatedSettings)
+        saveSettings(updatedSettings)
+      }
+    }
+  }
+
+  // Marquer une fermeture pour suppression (utilisé par la gomme)
+  const handleMarkClosureForDeletion = (closureId: string) => {
+    const updatedClosedPeriods = settings.closedPeriods.map(period => 
+      period.id === closureId 
+        ? { ...period, pendingDeletion: true }
+        : period
+    )
+    const updatedSettings = { ...settings, closedPeriods: updatedClosedPeriods }
+    setSettingsState(updatedSettings)
+    saveSettings(updatedSettings)
+  }
+
+  // Annuler la suppression d'une fermeture
+  const handleCancelClosureDeletion = (closureId: string) => {
+    const updatedClosedPeriods = settings.closedPeriods.map(period => 
+      period.id === closureId 
+        ? { ...period, pendingDeletion: false }
+        : period
+    )
+    const updatedSettings = { ...settings, closedPeriods: updatedClosedPeriods }
+    setSettingsState(updatedSettings)
+    saveSettings(updatedSettings)
+  }
+
+  // Ajouter une fermeture pour une date
+  const addClosureForDate = (dateStr: string, reason: string = "closed") => {
+    const newClosure: ClosedPeriod = {
+      id: `closure-${Date.now()}`,
+      startDate: dateStr,
+      endDate: dateStr,
+      reason: reason || "closed",
+      published: false, // Non publié par défaut
+    }
+    const updatedSettings = {
+      ...settings,
+      closedPeriods: [...settings.closedPeriods, newClosure],
+    }
+    setSettingsState(updatedSettings)
+    saveSettings(updatedSettings)
+  }
+
+  // Confirmer et ajouter la fermeture avec raison
+  const confirmClosureWithReason = () => {
+    if (!closureDialog) return
+    
+    // Si il y a des créneaux, les supprimer
+    if (closureDialog.hasSlots) {
+      const updatedSlots = slots.filter(s => s.date !== closureDialog.date)
+      setSlots(updatedSlots)
+      saveSlots(updatedSlots)
+    }
+    
+    // Ajouter la fermeture avec la raison
+    addClosureForDate(closureDialog.date, closureDialog.reason)
+    setClosureDialog(null)
+  }
+
+  // Toggle une fermeture pour une date donnée
+  const toggleClosureForDate = (dateStr: string) => {
+    const isClosed = isDateClosed(dateStr)
+    const dateSlots = getDateSlots(dateStr)
+
+    if (isClosed) {
+      // Le jour est fermé - retirer la fermeture
+      removeClosureForDate(dateStr)
+    } else {
+      // Le jour n'est pas fermé - ouvrir le dialog pour demander la raison
+      const totalBookings = dateSlots.reduce((acc, s) => acc + s.currentBookings, 0)
+      setClosureDialog({
+        isOpen: true,
+        date: dateStr,
+        reason: "",
+        hasSlots: dateSlots.length > 0,
+        slotsCount: dateSlots.length,
+        bookingsCount: totalBookings,
+      })
+    }
+  }
+
+  const handleQuickDeleteSlot = (e: React.MouseEvent, slotId: string) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setQuickEdit({
+      slotId,
+      field: "delete",
+      value: "",
+      position: { x: e.clientX, y: e.clientY }
+    })
+  }
+
+  const confirmDelete = (slotId: string) => {
+    const updatedSlots = slots.filter((s) => s.id !== slotId)
+    setSlots(updatedSlots)
+    saveSlots(updatedSlots)
+    setQuickEdit(null)
+  }
+
+  const openQuickEdit = (
+    e: React.MouseEvent,
+    slotId: string,
+    field: "price" | "capacity" | "duration" | "sports",
+    currentValue: number | string[],
+  ) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const rect = (e.target as HTMLElement).getBoundingClientRect()
+    
+    if (field === "sports") {
+      setQuickEdit({
+        slotId,
+        field,
+        value: "",
+        position: { x: rect.left, y: rect.bottom + 4 },
+        selectedSports: currentValue as string[]
+      })
+    } else {
+      setQuickEdit({
+        slotId,
+        field,
+        value: (currentValue as number).toString(),
+        position: { x: rect.left, y: rect.bottom + 4 }
+      })
+    }
+  }
+
+  const toggleSportInQuickEdit = (sportId: string) => {
+    if (!quickEdit || !quickEdit.selectedSports) return
+    const newSports = quickEdit.selectedSports.includes(sportId)
+      ? quickEdit.selectedSports.filter(id => id !== sportId)
+      : [...quickEdit.selectedSports, sportId]
+    
+    // Au moins un sport doit être sélectionné
+    if (newSports.length === 0) return
+    
+    setQuickEdit({ ...quickEdit, selectedSports: newSports })
+  }
+
+  const saveQuickEdit = () => {
+    if (!quickEdit || quickEdit.field === "delete") return
+    
+    if (quickEdit.field === "sports" && quickEdit.selectedSports) {
+      updateSlot(quickEdit.slotId, { sportIds: quickEdit.selectedSports })
+      setQuickEdit(null)
+      return
+    }
+
+    const numValue = Number(quickEdit.value)
+    if (isNaN(numValue) || numValue <= 0) {
+      setQuickEdit(null)
+      return
+    }
+
+    // Vérifier le chevauchement si on change la durée
+    if (quickEdit.field === "duration") {
+      const slot = slots.find(s => s.id === quickEdit.slotId)
+      if (slot && checkSlotOverlap(quickEdit.slotId, slot.date, slot.time, numValue * 60)) {
+        alert(t('admin.slots.overlapError'))
+        return
+      }
+    }
+
+    switch (quickEdit.field) {
+      case "price":
+        updateSlot(quickEdit.slotId, { price: numValue })
+        break
+      case "capacity":
+        updateSlot(quickEdit.slotId, { maxCapacity: numValue })
+        break
+      case "duration":
+        updateSlot(quickEdit.slotId, { duration: numValue * 60 })
+        break
+    }
+    setQuickEdit(null)
+  }
+
+  // Sauvegarder directement avec une valeur spécifique (pour les boutons rapides)
+  const saveQuickEditWithValue = (value: number) => {
+    if (!quickEdit || quickEdit.field === "delete" || quickEdit.field === "sports") return
+
+    // Vérifier le chevauchement si on change la durée
+    if (quickEdit.field === "duration") {
+      const slot = slots.find(s => s.id === quickEdit.slotId)
+      if (slot && checkSlotOverlap(quickEdit.slotId, slot.date, slot.time, value * 60)) {
+        alert(t('admin.slots.overlapError'))
+        return
+      }
+    }
+
+    switch (quickEdit.field) {
+      case "price":
+        updateSlot(quickEdit.slotId, { price: value })
+        break
+      case "capacity":
+        updateSlot(quickEdit.slotId, { maxCapacity: value })
+        break
+      case "duration":
+        updateSlot(quickEdit.slotId, { duration: value * 60 })
+        break
+    }
+    setQuickEdit(null)
+  }
+
+  const renderEventContent = (eventContent: EventContentArg) => {
+    const eventType = eventContent.event.extendedProps?.type
+    const viewType = eventContent.view.type
+    
+    // Les fermetures sont en background, pas besoin de les render
+    if (eventType === "closure") {
+      return null
+    }
+    
+    // Événement de créneau
+    const slot = eventContent.event.extendedProps?.slot as TimeSlot | undefined
+    if (!slot) {
+      return <div className="p-2 text-white text-xs">{t('home.slot.slot')}</div>
+    }
+    
+    const sportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
+    const sportIcons = getSportIcons(sportIds, true)
+    const availablePlaces = slot.maxCapacity - slot.currentBookings
+    const hasDisabledSport = sportIcons.some(s => s.disabled)
+    const isOutsideWorkingHours = slot.outsideWorkingHours === true
+    const isPendingDeletion = slot.pendingDeletion === true
+
+    // Vue Mois : affichage compact (juste un indicateur)
+    if (viewType === "dayGridMonth") {
+      return (
+        <div className={`flex items-center gap-1 px-1 py-0.5 text-xs truncate ${isPendingDeletion ? "line-through opacity-70" : ""}`}>
+          {isPendingDeletion && <span title={t('admin.agenda.pendingDeletion')}>🗑️</span>}
+          {isOutsideWorkingHours && !isPendingDeletion && <span title={t('admin.settings.slotsOutsideHours')}>⚠️</span>}
+          <span className="flex items-center gap-0.5">
+            {sportIcons.slice(0, 2).map((s, i) => (
+              <span key={i} className={s.disabled ? "opacity-40 grayscale" : ""}>{s.icon}</span>
+            ))}
+            {sportIcons.length > 2 && <span className="text-[10px] opacity-60">+{sportIcons.length - 2}</span>}
+          </span>
+          <span className="font-medium">{slot.price}{settings.branding?.currencySymbol || ".-"}</span>
+          {slot.currentBookings > 0 && (
+            <span className="bg-white/30 px-1 rounded text-[10px]">{slot.currentBookings}/{slot.maxCapacity}</span>
+          )}
+        </div>
+      )
+    }
+
+    // Vue Semaine : affichage complet avec édition (désactivé en mode gomme ou mode Vue)
+    const isEraserMode = editMode === "eraser"
+    const isViewMode = agendaMode === "view"
+    const isEditDisabled = isEraserMode || isViewMode
+    
+    return (
+      <div className={`h-full p-1 sm:p-2 text-white flex flex-col justify-between group/event relative overflow-hidden ${isEraserMode ? "pointer-events-none" : ""} ${isPendingDeletion ? "pending-deletion" : ""}`}>
+        {/* Indicateur suppression en attente */}
+        {isPendingDeletion && (
+          <div className="absolute top-0.5 right-0.5 sm:top-1 sm:right-1 bg-rose-100 text-rose-700 text-[8px] sm:text-[10px] font-bold px-1 sm:px-2 py-0.5 rounded shadow" title={t('admin.agenda.pendingDeletion')}>
+            🗑️
+          </div>
+        )}
+        {/* Indicateur hors horaires */}
+        {isOutsideWorkingHours && !isPendingDeletion && (
+          <div className="absolute top-0.5 right-0.5 sm:top-1 sm:right-1 bg-white/90 text-red-600 text-[8px] sm:text-[10px] font-bold px-0.5 sm:px-1 rounded shadow" title={t('admin.settings.slotsOutsideHours')}>
+            ⚠️
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-1 min-w-0">
+          <div
+            onClick={isEditDisabled ? undefined : (e) => openQuickEdit(e as any, slot.id, "sports", sportIds)}
+            className={`text-sm sm:text-base px-0.5 sm:px-1 rounded flex items-center gap-0.5 flex-shrink min-w-0 overflow-hidden ${isEditDisabled ? "" : "hover:bg-white/20 cursor-pointer transition-colors"}`}
+            title={isEditDisabled ? undefined : t('admin.slots.editSports')}
+          >
+            {sportIcons.slice(0, 3).map((s, i) => (
+              <span 
+                key={i} 
+                className={`flex-shrink-0 ${s.disabled ? "opacity-40 grayscale" : ""}`}
+                title={s.disabled ? `${s.name} (${t('admin.sports.disabled')})` : s.name}
+              >
+                {s.icon}
+              </span>
+            ))}
+            {sportIcons.length > 3 && <span className="text-[10px] opacity-70">+{sportIcons.length - 3}</span>}
+          </div>
+          <div
+            onClick={isEditDisabled ? undefined : (e) => openQuickEdit(e as any, slot.id, "price", slot.price)}
+            className={`text-[10px] sm:text-xs font-bold bg-white/20 px-1 sm:px-1.5 py-0.5 rounded flex-shrink-0 ${isEditDisabled ? "" : "hover:bg-white/40 cursor-pointer transition-colors"}`}
+            title={isEditDisabled ? undefined : t('admin.slots.editPrice')}
+          >
+            {slot.price}{settings.branding?.currencySymbol || ".-"}
+          </div>
+        </div>
+        <div className="flex items-end justify-between gap-1">
+          <div className="flex items-center gap-0.5 sm:gap-1 text-[8px] sm:text-[10px]">
+            <span
+              onClick={isEditDisabled ? undefined : (e) => openQuickEdit(e as any, slot.id, "capacity", slot.maxCapacity)}
+              className={`opacity-90 px-0.5 sm:px-1 rounded ${isEditDisabled ? "" : "hover:opacity-100 hover:bg-white/20 cursor-pointer transition-colors"}`}
+              title={isEditDisabled ? undefined : t('admin.slots.editCapacity')}
+            >
+              {availablePlaces}/{slot.maxCapacity}
+            </span>
+            <span className="opacity-60 hidden sm:inline">•</span>
+            <span
+              onClick={isEditDisabled ? undefined : (e) => openQuickEdit(e as any, slot.id, "duration", slot.duration / 60)}
+              className={`opacity-90 px-0.5 sm:px-1 rounded hidden sm:inline ${isEditDisabled ? "" : "hover:opacity-100 hover:bg-white/20 cursor-pointer transition-colors"}`}
+              title={isEditDisabled ? undefined : t('admin.slots.editDuration')}
+            >
+              {slot.duration/60}h
+            </span>
+          </div>
+          {!isEditDisabled && (
+            <button
+              onClick={(e) => handleQuickDeleteSlot(e, slot.id)}
+              className="opacity-0 group-hover/event:opacity-100 transition-opacity bg-red-500 hover:bg-red-600 text-white rounded p-1 -mr-1 -mb-1"
+              title={t('common.delete')}
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const updateSlot = (slotId: string, updates: Partial<TimeSlot>) => {
+    const updatedSlots = slots.map((slot) => (slot.id === slotId ? { ...slot, ...updates } : slot))
+    setSlots(updatedSlots)
+    saveSlots(updatedSlots)
+  }
+
+  // Fonction pour effacer un événement (créneau ou fermeture) - marquer pour suppression
+  const eraseEvent = (event: any) => {
+    const eventType = event.extendedProps?.type
+    if (eventType === "closure") {
+      const closureId = event.extendedProps?.closureId as string
+      const isPendingDeletion = event.extendedProps?.isPendingDeletion
+      if (closureId && !isPendingDeletion) {
+        // Marquer la fermeture pour suppression
+        handleMarkClosureForDeletion(closureId)
+      }
+    } else {
+      const slotId = event.id
+      const slot = slots.find(s => s.id === slotId)
+      if (slot && !slot.pendingDeletion) {
+        // Marquer pour suppression
+        handleMarkForDeletion(slotId)
+      }
+    }
+  }
+
+  // Fonction pour annuler la suppression d'un événement (clic droit en mode gomme)
+  const uneraseEvent = (event: any) => {
+    const eventType = event.extendedProps?.type
+    if (eventType === "closure") {
+      const closureId = event.extendedProps?.closureId as string
+      const isPendingDeletion = event.extendedProps?.isPendingDeletion
+      if (closureId && isPendingDeletion) {
+        handleCancelClosureDeletion(closureId)
+      }
+    } else {
+      const slotId = event.id
+      const slot = slots.find(s => s.id === slotId)
+      if (slot && slot.pendingDeletion) {
+        handleCancelDeletion(slotId)
+      }
+    }
+  }
+
+  // Supprimer une réservation (annulation par l'admin)
+  const handleDeleteBooking = async (booking: Booking) => {
+    const confirmMessage = t('admin.agenda.confirmDeleteBooking', { 
+      name: booking.customerName,
+      people: booking.numberOfPeople 
+    })
+    
+    if (!confirm(confirmMessage)) return
+    
+    // Supprimer la réservation
+    const updatedBookings = bookings.filter(b => b.id !== booking.id)
+    saveBookings(updatedBookings)
+    setBookings(updatedBookings)
+    
+    // Mettre à jour le créneau (décrémenter currentBookings)
+    const updatedSlots = slots.map(s => {
+      if (s.id === booking.slotId) {
+        return { 
+          ...s, 
+          currentBookings: Math.max(0, s.currentBookings - booking.numberOfPeople)
+      }
+    }
+      return s
+    })
+    saveSlots(updatedSlots, { immediate: true })
+    setSlots(updatedSlots)
+    
+    // Mettre à jour le modal
+    const updatedModalBookings = bookingDetailsModal.bookings.filter(b => b.id !== booking.id)
+    const updatedSlot = updatedSlots.find(s => s.id === booking.slotId)
+    setBookingDetailsModal({
+      ...bookingDetailsModal,
+      bookings: updatedModalBookings,
+      slot: updatedSlot || bookingDetailsModal.slot
+    })
+    
+    // Incrémenter la version pour synchroniser
+    incrementDataVersion()
+  }
+
+  const handleCalendarEventClick = (info: EventClickArg) => {
+    const eventType = info.event.extendedProps?.type
+    
+    // MODE VUE : Afficher les détails de réservation
+    if (agendaMode === "view") {
+      if (eventType === "slot" || !eventType) {
+        const slot = slots.find((s) => s.id === info.event.id)
+        if (slot) {
+          // Récupérer les réservations pour ce créneau
+          const slotBookings = bookings.filter(b => b.slotId === slot.id)
+          setBookingDetailsModal({
+            isOpen: true,
+            slot,
+            bookings: slotBookings
+          })
+        }
+      }
+      return
+    }
+    
+    // MODE ÉDITION
+    // Mode gomme : marquer/démarquer pour suppression
+    if (editMode === "eraser") {
+      // Clic gauche normal : marquer pour suppression
+      eraseEvent(info.event)
+      return
+    }
+    
+    // Si c'est une fermeture (background event), toggle en mode fermeture
+    if (eventType === "closure") {
+      const dateStr = info.event.extendedProps?.date as string
+      if (dateStr) {
+        toggleClosureForDate(dateStr)
+      }
+      return
+    }
+    
+    // Si c'est un créneau - ouvrir l'édition
+    const slot = slots.find((s) => s.id === info.event.id)
+    if (slot) {
+      handleEditSlot(slot)
+    }
+  }
+
+  // Handler pour le survol des événements en mode gomme (peinture)
+  const handleCalendarEventMouseEnter = (info: any) => {
+    if (editMode === "eraser" && isErasing && !isRightClicking) {
+      eraseEvent(info.event)
+    } else if (editMode === "eraser" && isRightClicking) {
+      uneraseEvent(info.event)
+    }
+  }
+
+  // Vérifier si un créneau chevauche un autre
+  const checkSlotOverlap = (slotId: string, date: string, time: string, duration: number) => {
+    const slotStart = new Date(`${date}T${time}`)
+    const slotEnd = new Date(slotStart.getTime() + duration * 60000)
+    
+    return slots.some(s => {
+      if (s.id === slotId) return false // Ignorer le créneau lui-même
+      if (s.date !== date) return false // Pas le même jour
+      
+      const otherStart = new Date(`${s.date}T${s.time}`)
+      const otherEnd = new Date(otherStart.getTime() + s.duration * 60000)
+      
+      // Vérifier le chevauchement
+      return slotStart < otherEnd && slotEnd > otherStart
+    })
+  }
+
+  const handleCalendarEventDrop = (info: EventDropArg) => {
+    const eventType = info.event.extendedProps?.type
+    // Ne pas permettre de déplacer les fermetures
+    if (eventType === "closure") {
+      info.revert()
+      return
+    }
+    if (!info.event.start) return
+    
+    const { date, time } = parseDateParts(info.event.start)
+    const slot = slots.find(s => s.id === info.event.id)
+    
+    // Vérifier si le jour de destination est désactivé dans les horaires de travail
+    const targetDate = new Date(date)
+    const targetDayOfWeek = targetDate.getDay()
+    const targetWorkingHours = settings.workingHours.find(wh => wh.dayOfWeek === targetDayOfWeek)
+    
+    if (!targetWorkingHours || !targetWorkingHours.enabled) {
+      // Jour désactivé - bloquer le déplacement
+      info.revert()
+      return
+    }
+    
+    if (slot && checkSlotOverlap(info.event.id, date, time, slot.duration)) {
+      info.revert()
+      return
+    }
+    
+    if (slot) {
+      // Créer un slot temporaire pour vérifier s'il est dans les horaires
+      const tempSlot = { ...slot, date, time }
+      const isWithinHours = isSlotWithinWorkingHours(tempSlot, settings.workingHours)
+      
+      // Déterminer les nouvelles valeurs
+      const updates: Partial<TimeSlot> = { date, time }
+      
+      // Si le créneau était publié, sauvegarder les coordonnées originales
+      // pour que le client continue de voir le créneau à l'ancienne position
+      if (slot.published && !slot.originalDate && !slot.originalTime) {
+        updates.originalDate = slot.date
+        updates.originalTime = slot.time
+      }
+      
+      if (isWithinHours) {
+        // Si le créneau est maintenant dans les horaires, le remettre en brouillon (orange)
+        updates.outsideWorkingHours = false
+        updates.published = false // Non publié = orange
+      } else {
+        // Si le créneau est hors horaires (heure hors plage), le marquer comme tel (rouge)
+        updates.outsideWorkingHours = true
+      }
+      
+      updateSlot(info.event.id, updates)
+    }
+  }
+
+  const handleCalendarEventResize = (info: EventResizeInfo) => {
+    const eventType = info.event.extendedProps?.type
+    // Ne pas permettre de redimensionner les fermetures
+    if (eventType === "closure") {
+      info.revert()
+      return
+    }
+    if (!info.event.start || !info.event.end) return
+    
+    const newStart = info.event.start
+    const newEnd = info.event.end
+    const duration = Math.max(30, Math.round((newEnd.getTime() - newStart.getTime()) / 60000))
+    
+    // Récupérer la nouvelle heure de début (si redimensionné vers le haut)
+    const newTime = `${String(newStart.getHours()).padStart(2, '0')}:${String(newStart.getMinutes()).padStart(2, '0')}`
+    const newDate = formatDateLocal(newStart)
+    
+    // Vérifier si le jour est désactivé dans les horaires de travail
+    const targetDayOfWeek = newStart.getDay()
+    const targetWorkingHours = settings.workingHours.find(wh => wh.dayOfWeek === targetDayOfWeek)
+    
+    if (!targetWorkingHours || !targetWorkingHours.enabled) {
+      // Jour désactivé - bloquer le redimensionnement
+      info.revert()
+      return
+    }
+    
+    // Vérifier si le nouveau créneau causerait un chevauchement
+    if (checkSlotOverlap(info.event.id, newDate, newTime, duration)) {
+      info.revert()
+      return
+    }
+    
+    const slot = slots.find(s => s.id === info.event.id)
+    if (slot) {
+      // Créer un slot temporaire pour vérifier s'il est dans les horaires
+      const tempSlot = { ...slot, date: newDate, time: newTime, duration }
+      const isWithinHours = isSlotWithinWorkingHours(tempSlot, settings.workingHours)
+      
+      // Déterminer les nouvelles valeurs
+      const updates: Partial<TimeSlot> = { date: newDate, time: newTime, duration }
+      
+      // Si le créneau était publié, sauvegarder les valeurs originales
+      // pour que le client continue de voir le créneau à l'ancienne position/durée
+      if (slot.published && !slot.originalDate && !slot.originalTime && !slot.originalDuration) {
+        updates.originalDate = slot.date
+        updates.originalTime = slot.time
+        updates.originalDuration = slot.duration
+      }
+      
+      if (isWithinHours) {
+        // Si le créneau est maintenant dans les horaires, le remettre en brouillon (orange)
+        updates.outsideWorkingHours = false
+        updates.published = false // Non publié = orange
+      } else {
+        // Si le créneau est hors horaires (heure hors plage), le marquer comme tel (rouge)
+        updates.outsideWorkingHours = true
+      }
+      
+      updateSlot(info.event.id, updates)
+    }
+  }
+
+  const handleCalendarSelect = (selection: DateSelectArg) => {
+    // Ne rien faire en mode vue
+    if (agendaMode === "view") {
+      selection.view.calendar.unselect()
+      return
+    }
+    
+    // Uniquement en vue semaine
+    if (selection.view.type !== "timeGridWeek") {
+      selection.view.calendar.unselect()
+      return
+    }
+    
+    // Extraire la date correctement en tenant compte du timezone local
+    const startDate = selection.start
+    const endDate = selection.end
+    const year = startDate.getFullYear()
+    const month = String(startDate.getMonth() + 1).padStart(2, '0')
+    const day = String(startDate.getDate()).padStart(2, '0')
+    const dateStr = `${year}-${month}-${day}`
+    
+    if (editMode === "slot") {
+      // Mode créneau : créer un créneau
+      const hours = String(startDate.getHours()).padStart(2, '0')
+      const minutes = String(startDate.getMinutes()).padStart(2, '0')
+      
+      // Calculer la durée en minutes basée sur la sélection (glisser-créer)
+      const durationMs = endDate.getTime() - startDate.getTime()
+      const durationMinutes = Math.round(durationMs / (1000 * 60))
+      
+      // Utiliser la durée sélectionnée ou la durée par défaut si trop courte
+      const finalDuration = durationMinutes >= 15 ? durationMinutes : settings.defaultSlotDuration
+      
+      handleCreateSlot(dateStr, `${hours}:${minutes}`, finalDuration)
+    } else if (editMode === "closure") {
+      // Mode fermeture : toggle la fermeture pour ce jour
+      toggleClosureForDate(dateStr)
+    }
+    selection.view.calendar.unselect()
+  }
+
+  const handleCalendarDatesSet = (arg: DatesSetArg) => {
+    setCalendarTitle(arg.view.title)
+    setCalendarMeta({
+      type: arg.view.type,
+      currentStart: arg.view.currentStart,
+      currentEnd: arg.view.currentEnd,
+    })
+  }
+
+  const handleCalendarPrev = () => {
+    // Calculer la nouvelle date selon la vue
+    const newDate = new Date(calendarDate)
+    if (calendarView === "timeGridWeek") {
+      newDate.setDate(newDate.getDate() - 7)
+    } else {
+      newDate.setMonth(newDate.getMonth() - 1)
+    }
+    setCalendarDate(newDate)
+  }
+
+  const handleCalendarNext = () => {
+    // Calculer la nouvelle date selon la vue
+    const newDate = new Date(calendarDate)
+    if (calendarView === "timeGridWeek") {
+      newDate.setDate(newDate.getDate() + 7)
+    } else {
+      newDate.setMonth(newDate.getMonth() + 1)
+    }
+    setCalendarDate(newDate)
+  }
+
+  const handleCalendarToday = () => {
+    setCalendarDate(new Date())
+  }
+
+  const handleViewSwitch = (view: "timeGridWeek" | "dayGridMonth") => {
+    setCalendarView(view)
+  }
+  
+  // Aller à une date spécifique en vue semaine
+  const goToDateInWeekView = (date: Date) => {
+    setCalendarDate(date)
+    setCalendarView("timeGridWeek")
+  }
+
+  const confirmAndDeleteRange = (start: Date, end: Date, label: string) => {
+    if (
+      confirm(
+        `${t('admin.slots.delete')} ${start.toLocaleDateString(i18n.language)} - ${end.toLocaleDateString(i18n.language)} (${label}) ?`,
+      )
+    ) {
+      const updatedSlots = slots.filter((slot) => {
+        const slotDate = new Date(`${slot.date}T00:00:00`)
+        return slotDate < start || slotDate > end
+      })
+      setSlots(updatedSlots)
+      saveSlots(updatedSlots)
+    }
+  }
+
+  const handleDeleteVisibleWeek = () => {
+    if (!calendarMeta || calendarMeta.type !== "timeGridWeek") return
+    const start = new Date(calendarMeta.currentStart)
+    const end = new Date(calendarMeta.currentEnd)
+    end.setDate(end.getDate() - 1)
+    confirmAndDeleteRange(start, end, "semaine")
+  }
+
+  const handleDeleteVisibleMonth = () => {
+    if (!calendarMeta || calendarMeta.type !== "dayGridMonth") return
+    const start = new Date(calendarMeta.currentStart)
+    const end = new Date(calendarMeta.currentEnd)
+    end.setDate(end.getDate() - 1)
+    confirmAndDeleteRange(
+      start,
+      end,
+      start.toLocaleDateString(i18n.language, { month: "long", year: "numeric" }),
+    )
+  }
+
+  const handleEditSlot = (slot: TimeSlot) => {
+    setEditingSlot(slot)
+    setSlotForm({
+      sportIds: slot.sportIds || (slot.sportId ? [slot.sportId] : []),
+      maxCapacity: slot.maxCapacity,
+      price: slot.price,
+      duration: slot.duration,
+    })
+    setIsSlotDialogOpen(true)
+  }
+
+  // Vérifier si une durée est valide pour un jour et une heure donnés
+  const isDurationValidForDay = (date: string, time: string, duration: number): { valid: boolean; maxDuration: number; message: string } => {
+    const d = new Date(date + "T12:00:00")
+    const dayOfWeek = d.getDay()
+    const workingHour = settings.workingHours.find((wh) => wh.dayOfWeek === dayOfWeek)
+    
+    if (!workingHour || !workingHour.enabled) {
+      return { valid: false, maxDuration: 0, message: t('admin.slots.noWorkingHours') }
+    }
+
+    const [startH, startM] = workingHour.startTime.split(":").map(Number)
+    const [endH, endM] = workingHour.endTime.split(":").map(Number)
+    const dayStartMinutes = startH * 60 + startM
+    const dayEndMinutes = endH * 60 + endM
+    const totalDayMinutes = dayEndMinutes - dayStartMinutes
+
+    // Calculer le temps restant depuis l'heure de début du créneau
+    const [slotH, slotM] = time.split(":").map(Number)
+    const slotStartMinutes = slotH * 60 + slotM
+    const remainingMinutes = dayEndMinutes - slotStartMinutes
+
+    if (duration > remainingMinutes) {
+      const maxHours = Math.floor(remainingMinutes / 60)
+      return { 
+        valid: false, 
+        maxDuration: remainingMinutes,
+        message: `${t('admin.slots.durationTooLong')} ${t('admin.slots.remainingTime')} ${maxHours}h${remainingMinutes % 60 > 0 ? `${remainingMinutes % 60}min` : ''} ${t('admin.slots.beforeClosing')} (${workingHour.endTime}).`
+      }
+    }
+
+    if (duration > totalDayMinutes) {
+      const maxHours = Math.floor(totalDayMinutes / 60)
+      return { 
+        valid: false, 
+        maxDuration: totalDayMinutes,
+        message: `${t('admin.slots.durationTooLong')} ${t('admin.slots.dayOnlyLasts')} ${maxHours}h (${workingHour.startTime} - ${workingHour.endTime}).`
+      }
+    }
+
+    return { valid: true, maxDuration: remainingMinutes, message: "" }
+  }
+
+  // Fonction pour changer le mot de passe admin
+  const handleChangePassword = () => {
+    setPasswordError("")
+    setPasswordSuccess("")
+
+    // Vérifier le mot de passe actuel
+    if (passwordForm.currentPassword !== adminCredentials.password) {
+      setPasswordError(t('admin.settings.security.wrongPassword'))
+      return
+    }
+
+    // Vérifier que le nouveau mot de passe n'est pas vide
+    if (!passwordForm.newPassword.trim()) {
+      setPasswordError(t('admin.settings.security.passwordEmpty'))
+      return
+    }
+
+    // Vérifier que le nouveau mot de passe a au moins 4 caractères
+    if (passwordForm.newPassword.length < 4) {
+      setPasswordError(t('admin.settings.security.passwordTooShort'))
+      return
+    }
+
+    // Vérifier que les deux nouveaux mots de passe correspondent
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError(t('admin.settings.security.passwordMismatch'))
+      return
+    }
+
+    // Sauvegarder le nouveau mot de passe
+    const newCredentials = {
+      ...adminCredentials,
+      password: passwordForm.newPassword,
+    }
+    saveAdminCredentials(newCredentials)
+    setAdminCredentials(newCredentials)
+
+    // Reset le formulaire
+    setPasswordForm({
+      currentPassword: "",
+      newPassword: "",
+      confirmPassword: "",
+      showCurrent: false,
+      showNew: false,
+      showConfirm: false,
+    })
+    setPasswordSuccess(t('admin.settings.security.passwordChanged'))
+
+    // Effacer le message de succès après 3 secondes
+    setTimeout(() => setPasswordSuccess(""), 3000)
+  }
+
+  const handleSaveSlot = () => {
+    if (!editingSlot) return
+
+    // Vérifier si la durée est valide pour ce jour
+    const durationCheck = isDurationValidForDay(editingSlot.date, editingSlot.time, slotForm.duration)
+    if (!durationCheck.valid) {
+      alert(durationCheck.message)
+      return
+    }
+
+    // Vérifier le chevauchement si la durée a changé
+    if (slotForm.duration !== editingSlot.duration) {
+      if (checkSlotOverlap(editingSlot.id, editingSlot.date, editingSlot.time, slotForm.duration)) {
+        alert(t('admin.slots.overlapError'))
+        return
+      }
+    }
+
+    const updatedSlots = slots.map((s) => (s.id === editingSlot.id ? { ...s, ...slotForm } : s))
+    setSlots(updatedSlots)
+    saveSlots(updatedSlots)
+    setIsSlotDialogOpen(false)
+    setEditingSlot(null)
+  }
+
+  const handleCreateSlot = (date: string, time: string, duration = settings.defaultSlotDuration) => {
+    const enabledSports = sports.filter((s) => s.enabled)
+    if (enabledSports.length === 0) {
+      alert(t('admin.slots.noSportEnabled'))
+      return
+    }
+
+    // Vérifier si le jour est désactivé dans les horaires de travail
+    const slotDate = new Date(date)
+    const dayOfWeek = slotDate.getDay()
+    const workingHour = settings.workingHours.find(wh => wh.dayOfWeek === dayOfWeek)
+    
+    if (!workingHour || !workingHour.enabled) {
+      // Jour désactivé - ne pas permettre la création
+      return
+    }
+
+    // Vérifier si la durée est valide pour ce jour et cette heure
+    const durationCheck = isDurationValidForDay(date, time, duration)
+    if (!durationCheck.valid) {
+      alert(durationCheck.message)
+      return
+    }
+
+    // Vérifier si un créneau existe déjà à cet emplacement
+    if (checkSlotOverlap("", date, time, duration)) {
+      // Un créneau existe déjà, ne pas créer
+      return
+    }
+
+    // Vérifier si le jour est fermé (période de fermeture)
+    if (isDateClosed(date)) {
+      if (confirm(t('admin.agenda.closedDayConfirm'))) {
+        removeClosureForDate(date)
+      } else {
+        return
+      }
+    }
+
+    // Si un sport spécifique est sélectionné dans le filtre, on l'utilise
+    // Sinon on prend tous les sports activés
+    let sportIdsForSlot: string[]
+    if (selectedSportFilter !== "all") {
+      // Vérifier que le sport sélectionné est bien activé
+      const selectedSport = sports.find((s) => s.id === selectedSportFilter && s.enabled)
+      if (!selectedSport) {
+        alert(t('admin.sports.notEnabled'))
+        return
+      }
+      sportIdsForSlot = [selectedSportFilter]
+    } else {
+      sportIdsForSlot = enabledSports.map((s) => s.id)
+    }
+
+    const newSlot: TimeSlot = {
+      id: `${Date.now()}-${Math.random()}`,
+      sportIds: sportIdsForSlot,
+      date,
+      time,
+      duration,
+      maxCapacity: settings.defaultMaxCapacity,
+      currentBookings: 0,
+      price: settings.defaultPrice,
+      published: false, // Nouveau créneau = brouillon (orange)
+    }
+    const updatedSlots = [...slots, newSlot]
+    setSlots(updatedSlots)
+    saveSlots(updatedSlots)
+  }
+
+  // Écran de chargement
+  if (isPageLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-gray-200 animate-pulse" />
+          <div className="h-6 w-36 mx-auto mb-2 bg-gray-200 rounded-lg animate-pulse" />
+          <div className="h-4 w-24 mx-auto bg-gray-200 rounded animate-pulse" />
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white border-b sticky top-0 z-50 shadow-sm">
+        <div className="container mx-auto px-2 sm:px-4">
+          <div className="flex items-center justify-between h-14 sm:h-16">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div 
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center text-white overflow-hidden flex-shrink-0"
+                style={{ 
+                  backgroundColor: settings.branding?.logoUrl && settings.branding?.logoBackground === false
+                    ? "transparent"
+                    : (settings.branding?.primaryColor || "#3b82f6")
+                }}
+              >
+                {settings.branding?.logoUrl ? (
+                  <img 
+                    src={settings.branding.logoUrl} 
+                    alt="Logo" 
+                    className="w-6 h-6 sm:w-8 sm:h-8 object-contain"
+                  />
+                ) : (
+                  <span className="text-lg sm:text-xl">{settings.branding?.logoIcon || "🏆"}</span>
+                )}
+              </div>
+              <div className="min-w-0">
+                <span className="font-bold text-base sm:text-xl text-gray-900 truncate block">
+                  {settings.branding?.siteName || "SportSlot"}
+                </span>
+                <span className="text-[10px] sm:text-xs text-gray-500 hidden sm:inline">{t('admin.title')}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 sm:gap-4">
+              {/* Indicateur de mode de stockage */}
+              {storageMode.mode !== 'checking' && (
+                <div 
+                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-medium"
+                  style={{ 
+                    backgroundColor: `${storageMode.color}20`,
+                    color: storageMode.color
+                  }}
+                  title={
+                    storageMode.mode === 'browser' ? t('admin.storage.browserDesc') :
+                    storageMode.mode === 'local' ? t('admin.storage.localDesc') :
+                    t('admin.storage.externalDesc')
+                  }
+                >
+                  <span>{storageMode.icon}</span>
+                  <span className="hidden sm:inline">{storageMode.label}</span>
+                </div>
+              )}
+              
+              <LanguageSwitcher variant="compact" />
+              
+              <Button variant="outline" size="sm" onClick={handleLogout} className="h-8 sm:h-9 px-2 sm:px-3">
+                <LogOut className="w-4 h-4 sm:mr-2" />
+                <span className="hidden sm:inline">{t('nav.logout')}</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="container mx-auto px-2 sm:px-4 py-3 sm:py-6">
+        <Card className="p-3 sm:p-6">
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="grid w-full grid-cols-3 bg-gray-100 p-0.5 sm:p-1 rounded-lg sm:rounded-xl">
+              <TabsTrigger value="agenda" className="rounded-md sm:rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm text-xs sm:text-sm py-1.5 sm:py-2">
+                <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 sm:mr-2" />
+                <span className="hidden sm:inline">{t('admin.tabs.agenda')}</span>
+              </TabsTrigger>
+              <TabsTrigger value="sports" className="rounded-md sm:rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm text-xs sm:text-sm py-1.5 sm:py-2">
+                <Trophy className="w-3.5 h-3.5 sm:w-4 sm:h-4 sm:mr-2" />
+                <span className="hidden sm:inline">{t('admin.tabs.sports')}</span>
+              </TabsTrigger>
+              <TabsTrigger value="slots" className="rounded-md sm:rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm text-xs sm:text-sm py-1.5 sm:py-2">
+                <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 sm:mr-2" />
+                <span className="hidden sm:inline">{t('admin.tabs.settings')}</span>
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="agenda" className="mt-6">
+              {/* Statistiques en ligne */}
+              {/* Statistiques dynamiques de la période - scroll horizontal sur mobile */}
+              <div className="mb-4 sm:mb-6">
+                <div className="flex items-center justify-between mb-2 sm:mb-3">
+                  <h3 className="text-xs sm:text-sm font-medium text-gray-500">
+                    {t('admin.agenda.stats.title')}
+                  </h3>
+                  <span className="text-[10px] sm:text-xs text-gray-400">
+                    {periodDates.start.toLocaleDateString(i18n.language, { day: "numeric", month: "short" })} - {periodDates.end.toLocaleDateString(i18n.language, { day: "numeric", month: "short" })}
+                  </span>
+                </div>
+                <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-2 -mx-2 px-2 sm:mx-0 sm:px-0 sm:grid sm:grid-cols-3 md:grid-cols-6 scrollbar-hide">
+                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
+                    <div className="flex items-center gap-2 sm:gap-3">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-lg sm:text-2xl font-bold text-blue-900">{stats.totalSlots}</p>
+                        <p className="text-[10px] sm:text-xs text-blue-600 font-medium truncate">{t('home.slot.slots')}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-emerald-50 to-emerald-100 border border-emerald-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
+                    <div className="flex items-center gap-2 sm:gap-3">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-emerald-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Users className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-lg sm:text-2xl font-bold text-emerald-900">{stats.totalBookings}</p>
+                        <p className="text-[10px] sm:text-xs text-emerald-600 font-medium truncate">{t('admin.slots.bookings')}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-violet-50 to-violet-100 border border-violet-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
+                    <div className="flex items-center gap-2 sm:gap-3">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-violet-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Users className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-lg sm:text-2xl font-bold text-violet-900">{stats.totalCapacity}</p>
+                        <p className="text-[10px] sm:text-xs text-violet-600 font-medium truncate">{t('admin.agenda.stats.places')}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
+                    <div className="flex items-center gap-2 sm:gap-3">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-lg sm:text-2xl font-bold text-amber-900">{stats.totalRevenue}</p>
+                        <p className="text-[10px] sm:text-xs text-amber-600 font-medium truncate">{settings.branding?.currency || "CHF"}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-cyan-50 to-cyan-100 border border-cyan-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
+                    <div className="flex items-center gap-2 sm:gap-3">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-cyan-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-lg sm:text-2xl font-bold text-cyan-900">{stats.totalHours}h</p>
+                        <p className="text-[10px] sm:text-xs text-cyan-600 font-medium truncate">{t('admin.agenda.stats.hours')}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-rose-50 to-rose-100 border border-rose-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
+                    <div className="flex items-center gap-2 sm:gap-3">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-rose-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Trophy className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-lg sm:text-2xl font-bold text-rose-900">{stats.totalCapacity > 0 ? Math.round((stats.totalBookings / stats.totalCapacity) * 100) : 0}%</p>
+                        <p className="text-[10px] sm:text-xs text-rose-600 font-medium truncate">{t('admin.agenda.stats.fillRate')}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Barre d'outils responsive */}
+              <div className="bg-white border border-gray-200 rounded-xl mb-4 shadow-sm overflow-hidden">
+                {/* NIVEAU 1 : Navigation et Vue */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between px-2 sm:px-4 py-2 sm:py-3 border-b border-gray-100 bg-gray-50/50 gap-2 sm:gap-0">
+                  {/* Navigation */}
+                  <div className="flex items-center gap-1.5 sm:gap-3">
+                    <button 
+                      onClick={handleCalendarToday}
+                      className="px-2 sm:px-4 py-2 bg-white hover:bg-gray-100 rounded-lg text-xs sm:text-sm font-semibold text-gray-700 transition-colors border border-gray-200 shadow-sm whitespace-nowrap"
+                    >
+                      {t('home.stats.todaySlots')}
+                    </button>
+                    <div className="flex items-center bg-white rounded-lg border border-gray-200 shadow-sm flex-1 sm:flex-none">
+                      <button onClick={handleCalendarPrev} className="p-1.5 sm:p-2.5 hover:bg-gray-100 rounded-l-lg transition-colors border-r border-gray-200">
+                        <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5 text-gray-600" />
+                      </button>
+                      <span className="px-2 sm:px-5 py-1.5 sm:py-2 text-xs sm:text-sm font-bold text-gray-900 flex-1 sm:min-w-[200px] text-center truncate">
+                        {calendarTitle || t('admin.tabs.agenda')}
+                      </span>
+                      <button onClick={handleCalendarNext} className="p-1.5 sm:p-2.5 hover:bg-gray-100 rounded-r-lg transition-colors border-l border-gray-200">
+                        <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5 text-gray-600" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Vue Semaine/Mois + Mode Vue/Édition */}
+                  <div className="flex items-center gap-1.5 sm:gap-3 justify-end">
+                    {/* Semaine/Mois */}
+                    <div className="flex bg-white rounded-lg p-0.5 sm:p-1 border border-gray-200 shadow-sm">
+                    <button
+                        onClick={() => handleViewSwitch("timeGridWeek")}
+                        className={`px-2 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold rounded-md transition-all ${
+                          calendarView === "timeGridWeek"
+                            ? "bg-gray-900 text-white shadow-sm"
+                            : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                        <span className="hidden sm:inline">{t('admin.agenda.views.week')}</span>
+                        <span className="sm:hidden">S</span>
+                    </button>
+                    <button
+                        onClick={() => handleViewSwitch("dayGridMonth")}
+                        className={`px-2 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold rounded-md transition-all ${
+                          calendarView === "dayGridMonth"
+                            ? "bg-gray-900 text-white shadow-sm"
+                            : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                        <span className="hidden sm:inline">{t('admin.agenda.views.month')}</span>
+                        <span className="sm:hidden">M</span>
+                    </button>
+                  </div>
+
+                    {/* Séparateur */}
+                    <div className="hidden sm:block h-8 w-px bg-gray-300" />
+
+                    {/* Toggle Vue / Éditer */}
+                    <div className="flex bg-gray-100 rounded-lg p-0.5 sm:p-1">
+                      <button
+                        onClick={() => setAgendaMode("view")}
+                        className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-semibold transition-all ${
+                          agendaMode === "view"
+                            ? "bg-white text-gray-900 shadow-sm"
+                            : "text-gray-500 hover:text-gray-700"
+                        }`}
+                      >
+                        <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                        <span className="hidden sm:inline">{t('admin.agenda.viewMode')}</span>
+                      </button>
+                      <button
+                        onClick={() => setAgendaMode("edit")}
+                        className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-semibold transition-all ${
+                          agendaMode === "edit"
+                            ? "bg-blue-600 text-white shadow-sm"
+                            : "text-gray-500 hover:text-gray-700"
+                        }`}
+                      >
+                        <Edit className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                        <span className="hidden sm:inline">{t('admin.agenda.editModeBtn')}</span>
+                      </button>
+                    </div>
+                  </div>
+                    </div>
+
+                {/* NIVEAU 2 : Outils (visible uniquement en mode édition) */}
+                {agendaMode === "edit" && (
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between px-2 sm:px-4 py-2 sm:py-3 border-t border-gray-100 gap-2 sm:gap-0">
+                  {/* Outils d'édition */}
+                  <div className="flex items-center gap-1.5 sm:gap-3 flex-wrap">
+                    <span className="hidden sm:inline text-xs font-semibold text-gray-400 uppercase tracking-wider">{t('admin.agenda.tools')}</span>
+                    <button
+                          onClick={() => setEditMode("slot")}
+                          className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
+                            editMode === "slot"
+                              ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30"
+                              : "bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600"
+                          }`}
+                        >
+                          <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          <span className="hidden sm:inline">{t('admin.agenda.editMode.slot')}</span>
+                          <span className="sm:hidden">+</span>
+                        </button>
+                        <button
+                          onClick={() => setEditMode("closure")}
+                          className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
+                            editMode === "closure"
+                              ? "bg-orange-500 text-white shadow-lg shadow-orange-500/30"
+                              : "bg-gray-100 text-gray-600 hover:bg-orange-50 hover:text-orange-600"
+                          }`}
+                        >
+                          <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          <span className="hidden sm:inline">{t('admin.agenda.editMode.closure')}</span>
+                        </button>
+                    <button
+                      onClick={() => setEditMode("eraser")}
+                      className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
+                        editMode === "eraser"
+                          ? "bg-red-600 text-white shadow-lg shadow-red-600/30"
+                          : "bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600"
+                      }`}
+                    >
+                      <Eraser className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                      <span className="hidden sm:inline">{t('admin.agenda.editMode.eraser')}</span>
+                    </button>
+
+                    {/* Filtre sport (visible seulement en mode créneau) */}
+                    {editMode === "slot" && (
+                      <div className="hidden sm:block ml-2 pl-2 border-l border-gray-200">
+                      <Select value={selectedSportFilter} onValueChange={setSelectedSportFilter}>
+                          <SelectTrigger className={`w-[140px] sm:w-[180px] h-8 sm:h-10 text-xs sm:text-sm rounded-lg ${selectedSportFilter !== "all" ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-200"}`}>
+                          <SelectValue placeholder="Sport" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">🎯 {t('admin.agenda.filters.allSports')}</SelectItem>
+                          {sports.filter(s => s.enabled).map((sport) => (
+                            <SelectItem key={sport.id} value={sport.id}>
+                              {sport.icon} {sport.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions de publication - responsive */}
+                  <div className="flex items-center gap-1 sm:gap-2 flex-wrap justify-end">
+                    {/* Groupe suppression en attente */}
+                    {totalPendingDeletions > 0 && (
+                      <div className="flex items-center gap-1 bg-rose-50 rounded-lg p-0.5 sm:p-1 border border-rose-200">
+                        {/* Bouton Annuler - désélectionner toutes les suppressions */}
+                        <Button
+                          onClick={() => {
+                            // Désélectionner tous les slots
+                            const updatedSlots = slots.map(slot => 
+                              slot.pendingDeletion ? { ...slot, pendingDeletion: false } : slot
+                            )
+                            setSlots(updatedSlots)
+                            saveSlots(updatedSlots)
+                            // Désélectionner toutes les fermetures
+                            const updatedClosedPeriods = settings.closedPeriods.map(p => 
+                              p.pendingDeletion ? { ...p, pendingDeletion: false } : p
+                            )
+                            const updatedSettings = { ...settings, closedPeriods: updatedClosedPeriods }
+                            setSettingsState(updatedSettings)
+                            saveSettings(updatedSettings)
+                            // Pas besoin d'incrementDataVersion car on annule juste la sélection
+                          }}
+                          title={t('common.cancel')}
+                          className="h-8 sm:h-10 px-2 sm:px-3 font-semibold bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 text-xs sm:text-sm"
+                        >
+                          ↩️ <span className="hidden sm:inline">{t('common.cancel')}</span>
+                        </Button>
+                        
+                        {/* Bouton Confirmer suppression */}
+                        <Button
+                          onClick={() => {
+                            const confirmMessage = `🗑️ ${totalPendingDeletions} ${t('admin.agenda.pendingDeletion')}.\n\n${t('admin.agenda.deleteOutsideSlots')} ?`
+                            if (confirm(confirmMessage)) {
+                              // Supprimer les slots en attente
+                              const updatedSlots = slots.filter(slot => !slot.pendingDeletion)
+                              setSlots(updatedSlots)
+                              saveSlots(updatedSlots)
+                              // Supprimer les fermetures en attente
+                              const updatedClosedPeriods = settings.closedPeriods.filter(p => !p.pendingDeletion)
+                              const updatedSettings = { ...settings, closedPeriods: updatedClosedPeriods }
+                              setSettingsState(updatedSettings)
+                              saveSettings(updatedSettings)
+                              incrementDataVersion()
+                            }
+                          }}
+                          title={t('admin.agenda.pendingDeletion')}
+                          className="h-8 sm:h-10 px-2 sm:px-4 font-semibold bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white shadow-lg shadow-rose-500/30 text-xs sm:text-sm"
+                        >
+                          🗑️ ({totalPendingDeletions})
+                        </Button>
+                  </div>
+                    )}
+
+                    {/* Indicateur créneaux hors horaires */}
+                    {outsideHoursCount > 0 && (
+                      <Button
+                        onClick={() => {
+                          const confirmMessage = `⚠️ ${outsideHoursCount} ${outsideHoursCount > 1 ? t('home.slot.slots') : t('home.slot.slot')} ${t('admin.settings.slotsOutsideHours')}.\n\n${t('admin.agenda.deleteOutsideSlots')} ?`
+                          if (confirm(confirmMessage)) {
+                            const updatedSlots = slots.filter(slot => slot.outsideWorkingHours !== true)
+                            setSlots(updatedSlots)
+                            saveSlots(updatedSlots)
+                            incrementDataVersion()
+                          }
+                        }}
+                        title={t('admin.agenda.outsideHours')}
+                        className="h-8 sm:h-11 px-2 sm:px-5 font-semibold bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white shadow-lg shadow-red-500/30 text-xs sm:text-base"
+                      >
+                        ⚠️ {outsideHoursCount}
+                      </Button>
+                    )}
+
+                    {/* Bouton Publier - visible seulement s'il y a quelque chose à publier */}
+                    {(() => {
+                      const totalChanges = unpublishedCount + unpublishedClosuresCount
+                      if (totalChanges === 0) return null
+                      return (
+                        <Button
+                          onClick={async () => {
+                            const result = await publishAllSlots()
+                            setSlots(getSlots())
+                            setSettingsState(getSettings())
+                            
+                            // Message détaillé
+                            const parts = []
+                            if (result.published > 0) {
+                              parts.push(`${result.published} ${result.published > 1 ? t('home.slot.slots') : t('home.slot.slot')} ${t('admin.agenda.published')}`)
+                            }
+                            if (result.deleted > 0) {
+                              parts.push(`${result.deleted} ${t('admin.agenda.deleted')}`)
+                            }
+                            if (result.deletedClosures > 0) {
+                              parts.push(`${result.deletedClosures} ${t('admin.agenda.closuresPublished')}`)
+                            }
+                            
+                            // Ajouter info synchronisation
+                            const syncStatus = result.synced ? "🔄 " + t('admin.agenda.syncedToDb') : ""
+                            alert("✅ " + (parts.join(", ") || t('admin.agenda.noChangesToPublish')) + (syncStatus ? "\n" + syncStatus : ""))
+                          }}
+                          title={t('admin.agenda.publish')}
+                          className="h-8 sm:h-11 px-2 sm:px-5 font-semibold bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg shadow-orange-500/30 animate-pulse text-xs sm:text-base"
+                        >
+                          🚀 <span className="hidden sm:inline">{t('admin.agenda.publish')}</span> ({totalChanges})
+                        </Button>
+                      )
+                    })()}
+                </div>
+                </div>
+                )}
+
+                {/* Indicateur de mode actif - Visible uniquement en mode édition */}
+                {agendaMode === "edit" && editMode === "slot" && (
+                  <div className="px-2 sm:px-4 py-1.5 sm:py-2 bg-blue-50 text-blue-700 border-t border-blue-100 text-xs sm:text-sm font-medium flex items-center gap-1.5 sm:gap-2">
+                    <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                    <span className="truncate">{t('admin.agenda.clickToAdd')}</span>
+                    {selectedSportFilter !== "all" && (
+                      <span className="ml-1 sm:ml-2 px-1.5 sm:px-2 py-0.5 bg-blue-200 rounded-full text-[10px] sm:text-xs whitespace-nowrap">
+                        {sports.find(s => s.id === selectedSportFilter)?.icon}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {agendaMode === "edit" && editMode === "closure" && (
+                  <div className="px-2 sm:px-4 py-1.5 sm:py-2 bg-orange-50 text-orange-700 border-t border-orange-100 text-xs sm:text-sm font-medium flex items-center gap-1.5 sm:gap-2">
+                    <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                    <span className="truncate">{t('admin.agenda.clickToClose')}</span>
+                  </div>
+                )}
+                {agendaMode === "edit" && editMode === "eraser" && (
+                  <div className="px-2 sm:px-4 py-1.5 sm:py-2 bg-red-50 text-red-700 border-t border-red-100 text-xs sm:text-sm font-medium flex items-center gap-1.5 sm:gap-2">
+                    <Eraser className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                    <span className="truncate">{t('admin.agenda.eraserMode')}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Calendrier */}
+              <div 
+                className={`bg-white border border-gray-200 rounded-lg overflow-hidden ${editMode === "eraser" ? "eraser-mode" : ""}`}
+                onMouseDown={(e) => {
+                  if (editMode === "eraser") {
+                    if (e.button === 0) {
+                      // Clic gauche : marquer pour suppression
+                      setIsErasing(true)
+                      setIsRightClicking(false)
+                    } else if (e.button === 2) {
+                      // Clic droit : désélectionner
+                      setIsRightClicking(true)
+                      setIsErasing(false)
+                    }
+                  }
+                }}
+                onMouseUp={() => {
+                  setIsErasing(false)
+                  setIsRightClicking(false)
+                }}
+                onMouseLeave={() => {
+                  setIsErasing(false)
+                  setIsRightClicking(false)
+                }}
+                onContextMenu={(e) => {
+                  if (editMode === "eraser") {
+                    e.preventDefault() // Empêcher le menu contextuel
+                  }
+                }}
+              >
+                <style jsx global>{`
+                  .fc {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                  }
+                  .fc-theme-standard td,
+                  .fc-theme-standard th {
+                    border-color: #e5e7eb;
+                  }
+                  .fc-scrollgrid {
+                    border: none !important;
+                  }
+                  /* Mode gomme - curseur personnalisé */
+                  .eraser-mode .fc-event {
+                    cursor: crosshair !important;
+                  }
+                  .eraser-mode .fc-event:hover {
+                    opacity: 0.6 !important;
+                    outline: 2px dashed #dc2626 !important;
+                    outline-offset: 2px;
+                  }
+                  .eraser-mode .fc-bg-event:hover {
+                    opacity: 0.4 !important;
+                    outline: 2px dashed #dc2626 !important;
+                    outline-offset: -2px;
+                  }
+                  /* Slots en attente de suppression - effet barré */
+                  .pending-deletion {
+                    background: repeating-linear-gradient(
+                      -45deg,
+                      transparent,
+                      transparent 5px,
+                      rgba(255,255,255,0.15) 5px,
+                      rgba(255,255,255,0.15) 10px
+                    ) !important;
+                    text-decoration: line-through;
+                    opacity: 0.85;
+                  }
+                  .fc-col-header-cell {
+                    background-color: #f9fafb;
+                    padding: 12px 8px;
+                    font-weight: 600;
+                    color: #374151;
+                    font-size: 13px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.05em;
+                    border-bottom: 2px solid #e5e7eb;
+                  }
+                  .fc-timegrid-slot {
+                    height: 60px !important;
+                  }
+                  .fc-timegrid-slot-lane {
+                    height: 60px !important;
+                  }
+                  .fc-timegrid-slot-label {
+                    color: #6b7280;
+                    font-size: 12px;
+                    font-weight: 500;
+                    padding: 8px 12px;
+                    vertical-align: top;
+                    background-color: #fafafa;
+                  }
+                  .fc-timegrid-col {
+                    background-color: #ffffff;
+                  }
+                  .fc-event {
+                    border-radius: 6px;
+                    border: none !important;
+                    cursor: pointer;
+                    margin: 2px 4px !important;
+                    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+                  }
+                  .fc-event:hover {
+                    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+                    transform: translateY(-1px);
+                  }
+                  .fc-event-main {
+                    padding: 0;
+                    height: 100%;
+                  }
+                  .fc-event-time {
+                    display: none;
+                  }
+                  .fc-day-today {
+                    background-color: #eff6ff !important;
+                  }
+                  .fc-timegrid-now-indicator-line {
+                    border-color: #ef4444;
+                    border-width: 2px;
+                  }
+                  .fc-daygrid-day-number {
+                    padding: 8px;
+                    color: #374151;
+                    font-weight: 600;
+                    font-size: 14px;
+                  }
+                  .fc-day-today .fc-daygrid-day-number {
+                    background-color: #3b82f6;
+                    color: white;
+                    border-radius: 50%;
+                    width: 32px;
+                    height: 32px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    margin: 4px;
+                  }
+                  .fc-highlight {
+                    background-color: #dbeafe !important;
+                  }
+                  .fc-timegrid-event-harness {
+                    margin: 0 2px;
+                  }
+                  .fc-col-header-cell.fc-day-today {
+                    background-color: #dbeafe !important;
+                  }
+                  /* Style pour les jours fermés (background events) */
+                  .fc-bg-event {
+                    opacity: 0.6 !important;
+                  }
+                  /* Heures hors ouverture - zones grisées */
+                  .fc-non-business {
+                    background: repeating-linear-gradient(
+                      45deg,
+                      #f3f4f6,
+                      #f3f4f6 10px,
+                      #e5e7eb 10px,
+                      #e5e7eb 20px
+                    ) !important;
+                  }
+                  .fc-timegrid-col.fc-day-disabled {
+                    background-color: #f3f4f6 !important;
+                  }
+                  /* ===== VUE MOIS AMÉLIORÉE ===== */
+                  .fc-daygrid {
+                    background-color: #ffffff;
+                  }
+                  .fc-daygrid-day {
+                    min-height: 100px !important;
+                    cursor: pointer;
+                    transition: all 0.15s;
+                  }
+                  .fc-daygrid-day:hover {
+                    background-color: #f0f9ff !important;
+                    transform: scale(1.02);
+                    z-index: 10;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+                  }
+                  .fc-daygrid-day {
+                    min-height: 110px !important;
+                  }
+                  .fc-daygrid-day-frame {
+                    min-height: 110px !important;
+                    padding: 0 !important;
+                    display: block !important;
+                  }
+                  .fc-daygrid-day-top,
+                  .fc-daygrid-day-events,
+                  .fc-daygrid-event-harness,
+                  .fc-daygrid-bg-harness,
+                  .fc-daygrid-day-bg {
+                    display: none !important;
+                  }
+                  .fc-daygrid-day.fc-day-other {
+                    background-color: #f9fafb;
+                    opacity: 0.6;
+                  }
+                  .fc-daygrid-day.fc-day-other:hover {
+                    opacity: 0.8;
+                  }
+                `}</style>
+                <FullCalendar
+                  key={`${calendarView}-${calendarDate.toISOString().split('T')[0]}-${i18n.language}-${slots.length}-${unpublishedCount}-${outsideHoursCount}-${pendingDeletionCount}-${unpublishedClosuresCount}-${pendingClosureDeletionCount}`}
+                  plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
+                  initialView={calendarView}
+                  initialDate={calendarDate}
+                  events={allCalendarEvents}
+                  headerToolbar={false}
+                  height="auto"
+                  slotMinTime={slotMinTime}
+                  slotMaxTime={slotMaxTime}
+                  slotDuration={slotDurationStep}
+                  allDaySlot={false}
+                  selectable={agendaMode === "edit" && calendarView === "timeGridWeek"}
+                  selectMirror={agendaMode === "edit" && editMode === "slot" && calendarView === "timeGridWeek"}
+                  editable={agendaMode === "edit" && editMode === "slot" && calendarView === "timeGridWeek"}
+                  eventResizableFromStart={true}
+                  eventDisplay="auto"
+                  eventTimeFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
+                  slotLabelFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
+                  firstDay={1}
+                  nowIndicator
+                  expandRows
+                  businessHours={businessHours}
+                  selectConstraint="businessHours"
+                  select={handleCalendarSelect}
+                  eventClick={handleCalendarEventClick}
+                  eventDrop={handleCalendarEventDrop}
+                  dayCellDidMount={(arg) => {
+                    if (calendarView !== "dayGridMonth") return
+                    
+                    const dateStr = formatDateLocal(arg.date)
+                    const dayStats = dailyStats.get(dateStr)
+                    const isClosed = dayStats?.hasClosure
+                    const hasSlots = dayStats && dayStats.slots > 0
+                    const isToday = arg.isToday
+                    
+                    // Vider le contenu existant
+                    arg.el.innerHTML = ''
+                    
+                    // Créer le conteneur principal
+                    const container = document.createElement('div')
+                    container.className = `w-full h-full flex flex-col cursor-pointer transition-colors ${isClosed ? 'bg-red-50' : 'hover:bg-gray-50'}`
+                    container.style.minHeight = '100px'
+                    
+                    // Header avec numéro du jour
+                    const header = document.createElement('div')
+                    header.className = 'flex justify-between items-start p-2'
+                    
+                    const dayNumber = document.createElement('span')
+                    if (isToday) {
+                      dayNumber.className = 'text-sm font-bold bg-blue-600 text-white w-7 h-7 rounded-full flex items-center justify-center shadow-md'
+                    } else {
+                      dayNumber.className = 'text-sm font-bold text-gray-700'
+                    }
+                    dayNumber.textContent = arg.dayNumberText.replace('日', '')
+                    header.appendChild(dayNumber)
+                    
+                    if (isClosed) {
+                      const closedIcon = document.createElement('span')
+                      closedIcon.className = 'text-lg'
+                      closedIcon.textContent = '🚫'
+                      header.appendChild(closedIcon)
+                    } else if (hasSlots) {
+                      const slotsIcon = document.createElement('span')
+                      slotsIcon.className = 'text-lg'
+                      slotsIcon.textContent = '📅'
+                      header.appendChild(slotsIcon)
+                    }
+                    
+                    container.appendChild(header)
+                    
+                    // Contenu selon l'état
+                    const content = document.createElement('div')
+                    content.className = 'flex-1 px-2 pb-2'
+                    
+                    if (hasSlots && !isClosed) {
+                      // Déterminer la couleur dominante selon les créneaux
+                      let bgClass = 'from-blue-500 to-blue-600' // Par défaut bleu (publiés)
+                      let hasWarning = false
+                      
+                      if (dayStats.outsideHours > 0) {
+                        // Rouge si au moins un créneau hors horaires
+                        bgClass = 'from-red-500 to-red-600'
+                        hasWarning = true
+                      } else if (dayStats.unpublished > 0 && dayStats.published === 0) {
+                        // Orange si tous non publiés
+                        bgClass = 'from-orange-500 to-orange-600'
+                      } else if (dayStats.unpublished > 0) {
+                        // Dégradé orange-bleu si mélangé
+                        bgClass = 'from-orange-500 to-blue-600'
+                      }
+                      
+                      const statsBox = document.createElement('div')
+                      statsBox.className = `bg-gradient-to-br ${bgClass} rounded-lg p-2 text-xs shadow-sm`
+                      const slotText = dayStats.slots > 1 ? t('admin.agenda.slotsCount') : t('admin.agenda.slotCount')
+                      const bookingsText = t('admin.slots.bookings')
+                      
+                      // Indicateurs de statut
+                      let statusIndicators = ''
+                      if (dayStats.outsideHours > 0) {
+                        statusIndicators += `<span class="bg-white/30 px-1 rounded">⚠️ ${dayStats.outsideHours}</span> `
+                      }
+                      if (dayStats.unpublished > 0) {
+                        statusIndicators += `<span class="bg-white/30 px-1 rounded">🟠 ${dayStats.unpublished}</span> `
+                      }
+                      if (dayStats.published > 0) {
+                        statusIndicators += `<span class="bg-white/30 px-1 rounded">🔵 ${dayStats.published}</span>`
+                      }
+                      
+                      statsBox.innerHTML = `
+                        <div class="flex justify-between items-center text-white">
+                          <span class="font-medium">${dayStats.slots} ${slotText}</span>
+                          <span class="font-bold">${dayStats.hours}h</span>
+                        </div>
+                        <div class="flex gap-1 mt-1 text-[10px]">${statusIndicators}</div>
+                        ${dayStats.bookings > 0 ? `
+                          <div class="flex justify-between items-center text-white/80 mt-1">
+                            <span>${dayStats.bookings} ${bookingsText}</span>
+                            <span class="font-semibold text-white">${dayStats.revenue} ${settings.branding?.currency || "CHF"}</span>
+                          </div>
+                        ` : ''}
+                      `
+                      content.appendChild(statsBox)
+                    } else if (isClosed) {
+                      const closedBox = document.createElement('div')
+                      closedBox.className = 'bg-gradient-to-br from-red-500 to-red-600 rounded-lg p-2 text-xs text-white font-bold text-center shadow-sm'
+                      closedBox.textContent = t('admin.agenda.closed')
+                      content.appendChild(closedBox)
+                    } else {
+                      const emptyBox = document.createElement('div')
+                      emptyBox.className = 'border-2 border-dashed border-gray-200 rounded-lg p-2 text-xs text-gray-400 text-center flex items-center justify-center'
+                      emptyBox.style.height = '40px'
+                      emptyBox.textContent = '—'
+                      content.appendChild(emptyBox)
+                    }
+                    
+                    container.appendChild(content)
+                    arg.el.appendChild(container)
+                  }}
+                  eventResize={handleCalendarEventResize}
+                  eventMouseEnter={handleCalendarEventMouseEnter}
+                  eventDidMount={(info) => {
+                    // Ajouter le gestionnaire de clic droit pour le mode gomme
+                    info.el.addEventListener('contextmenu', (e) => {
+                      if (editMode === "eraser") {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        // Clic droit simple = désélectionner
+                        uneraseEvent(info.event)
+                      }
+                    })
+                  }}
+                  datesSet={handleCalendarDatesSet}
+                  eventContent={renderEventContent}
+                  locale={i18n.language}
+                  droppable={false}
+                  eventOverlap={false}
+                  selectOverlap={false}
+                  weekends
+                  navLinks={true}
+                  navLinkDayClick={(date) => {
+                    goToDateInWeekView(date)
+                  }}
+                  dateClick={(info) => {
+                    // En vue mois, cliquer sur un jour va à la vue semaine
+                    if (info.view.type === "dayGridMonth") {
+                      goToDateInWeekView(info.date)
+                    }
+                    // Note: En vue semaine, le mode fermeture est géré par handleCalendarSelect
+                  }}
+                />
+              </div>
+
+              {/* Panneau des fermetures (visible en mode fermeture) */}
+              {editMode === "closure" && (
+                <div className="mt-4 bg-red-50 border-2 border-red-200 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="font-bold text-red-800 flex items-center gap-2">
+                        🚫 {t('admin.agenda.closureModeActive')}
+                      </h3>
+                      <p className="text-sm text-red-600 mt-1">
+                        {t('admin.agenda.clickToClose')}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setIsVacationDialogOpen(true)}
+                      className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium text-sm"
+                    >
+                      + {t('admin.agenda.multiplePeriod')}
+                    </button>
+                  </div>
+                  
+                  {settings.closedPeriods.length > 0 && (
+                    <div className="border-t border-red-200 pt-3 mt-3">
+                      <p className="text-xs font-medium text-red-700 mb-2">{t('admin.agenda.closedDays')} :</p>
+                      <div className="flex flex-wrap gap-2">
+                        {settings.closedPeriods.map((period) => {
+                          const startDate = new Date(period.startDate + "T00:00:00")
+                          const endDate = new Date(period.endDate + "T00:00:00")
+                          const isPublished = period.published === true
+                          
+                          return (
+                            <div
+                              key={period.id}
+                              className={`group flex items-center gap-2 px-3 py-1.5 bg-white rounded-lg text-sm border transition-all ${
+                                isPublished 
+                                  ? "border-red-200 hover:border-red-400" 
+                                  : "border-orange-300 hover:border-orange-500"
+                              }`}
+                            >
+                              {/* Indicateur de statut */}
+                              <span 
+                                className={`w-2 h-2 rounded-full ${isPublished ? "bg-red-500" : "bg-orange-500 animate-pulse"}`}
+                                title={isPublished ? t('admin.agenda.published') : t('admin.agenda.unpublishedClosures')}
+                              />
+                              <span className={`font-medium ${isPublished ? "text-red-800" : "text-orange-700"}`}>
+                                {getClosureReasonText(period.reason)}
+                              </span>
+                              <span className={`text-xs ${isPublished ? "text-red-600" : "text-orange-600"}`}>
+                                {startDate.toLocaleDateString(i18n.language, { day: 'numeric', month: 'short' })}
+                                {period.startDate !== period.endDate && (
+                                  <> → {endDate.toLocaleDateString(i18n.language, { day: 'numeric', month: 'short' })}</>
+                                )}
+                              </span>
+                              <button
+                                onClick={() => handleDeleteVacation(period.id)}
+                                className={`opacity-0 group-hover:opacity-100 p-1 rounded transition-all ${
+                                  isPublished ? "hover:bg-red-100 text-red-600" : "hover:bg-orange-100 text-orange-600"
+                                }`}
+                                title={t('common.delete')}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Génération automatique de créneaux */}
+              <Card className="mt-4 p-4 bg-gradient-to-br from-violet-500 to-purple-600 border-0 shadow-lg rounded-xl text-white">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center">
+                      <Plus className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold">{t('admin.generate.title')}</h3>
+                      <p className="text-sm text-white/80">{t('admin.generate.settings')}</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={openGenerateDialog}
+                    className="px-6 py-3 rounded-xl bg-white text-violet-600 font-bold hover:bg-white/90 transition-all shadow-lg"
+                  >
+                    ⚡ {t('admin.generate.generate')}
+                  </button>
+                </div>
+              </Card>
+
+              {/* Dialog de génération avancée */}
+              {isGenerateDialogOpen && (
+                <div 
+                  className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+                  onClick={() => setIsGenerateDialogOpen(false)}
+                >
+                  <div 
+                    className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                        <Plus className="w-6 h-6 text-white" />
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-bold text-gray-900">{t('admin.generate.title')}</h2>
+                        <p className="text-sm text-gray-500">{t('admin.generate.settings')}</p>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-6">
+                      {/* Période */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">📅 {t('admin.generate.startDate')}</Label>
+                          <Input
+                            type="date"
+                            value={generateForm.startDate}
+                            onChange={(e) => setGenerateForm({ ...generateForm, startDate: e.target.value })}
+                            className="h-11"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">📅 {t('admin.generate.endDate')}</Label>
+                          <Input
+                            type="date"
+                            value={generateForm.endDate}
+                            onChange={(e) => setGenerateForm({ ...generateForm, endDate: e.target.value })}
+                            className="h-11"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Sports */}
+                      <div>
+                        <Label className="text-sm font-medium text-gray-700 mb-2 block">🏆 {t('admin.tabs.sports')}</Label>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {sports.filter(s => s.enabled).map((sport) => (
+                            <button
+                              key={sport.id}
+                              onClick={() => {
+                                const newSportIds = generateForm.sportIds.includes(sport.id)
+                                  ? generateForm.sportIds.filter(id => id !== sport.id)
+                                  : [...generateForm.sportIds, sport.id]
+                                setGenerateForm({ ...generateForm, sportIds: newSportIds })
+                              }}
+                              className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-all ${
+                                generateForm.sportIds.includes(sport.id)
+                                  ? "bg-violet-100 text-violet-800 border-2 border-violet-400"
+                                  : "bg-gray-50 text-gray-700 border-2 border-gray-200 hover:bg-gray-100"
+                              }`}
+                            >
+                              <span className="text-lg">{sport.icon}</span>
+                              <span className="font-medium">{sport.name}</span>
+                              {generateForm.sportIds.includes(sport.id) && (
+                                <span className="ml-auto text-violet-600">✓</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Durée, Prix, Capacité */}
+                      <div className="grid grid-cols-3 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">⏱️ {t('admin.slots.duration')}</Label>
+                          <select
+                            value={generateForm.duration}
+                            onChange={(e) => setGenerateForm({ ...generateForm, duration: Number(e.target.value) })}
+                            className="w-full h-10 px-3 font-medium rounded-lg border-2 border-gray-200 focus:border-violet-400 focus:outline-none bg-white"
+                          >
+                            {Array.from({ length: 24 }, (_, i) => i + 1).map((h) => (
+                              <option key={h} value={h * 60}>{h}h</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">💰 {t('admin.slots.price')} ({settings.branding?.currency || "CHF"})</Label>
+                          <Input
+                            type="number"
+                            value={generateForm.price}
+                            onChange={(e) => setGenerateForm({ ...generateForm, price: Number(e.target.value) })}
+                            className="h-10"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">👥 {t('admin.slots.capacity')}</Label>
+                          <Input
+                            type="number"
+                            value={generateForm.maxCapacity}
+                            onChange={(e) => setGenerateForm({ ...generateForm, maxCapacity: Number(e.target.value) })}
+                            className="h-10"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Pause midi */}
+                      <div className="p-4 rounded-xl bg-amber-50 border-2 border-amber-200">
+                        <div className="flex items-center gap-3 mb-3">
+                          <button
+                            onClick={() => setGenerateForm({ ...generateForm, hasLunchBreak: !generateForm.hasLunchBreak })}
+                            className={`w-12 h-7 rounded-full relative transition-all ${
+                              generateForm.hasLunchBreak ? "bg-amber-500" : "bg-gray-300"
+                            }`}
+                          >
+                            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow transition-all ${
+                              generateForm.hasLunchBreak ? "left-6" : "left-1"
+                            }`} />
+                          </button>
+                          <div>
+                            <span className="font-medium text-amber-800">🍽️ {t('admin.generate.lunchBreak')}</span>
+                            <p className="text-xs text-amber-600">{t('admin.generate.lunchBreakDesc')}</p>
+                          </div>
+                        </div>
+                        {generateForm.hasLunchBreak && (
+                          <div className="flex items-center gap-3 mt-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-amber-700">{t('admin.generate.from')}</span>
+                              <input
+                                type="time"
+                                value={generateForm.lunchBreakStart}
+                                onChange={(e) => setGenerateForm({ ...generateForm, lunchBreakStart: e.target.value })}
+                                className="px-3 py-2 rounded-lg border-2 border-amber-300 focus:border-amber-500 focus:outline-none bg-white font-medium text-gray-700"
+                              />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-amber-700">{t('admin.generate.to')}</span>
+                              <input
+                                type="time"
+                                value={generateForm.lunchBreakEnd}
+                                onChange={(e) => setGenerateForm({ ...generateForm, lunchBreakEnd: e.target.value })}
+                                className="px-3 py-2 rounded-lg border-2 border-amber-300 focus:border-amber-500 focus:outline-none bg-white font-medium text-gray-700"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Info horaires */}
+                      <div className="p-4 rounded-xl bg-blue-50 border border-blue-200">
+                        <p className="text-sm text-blue-800">
+                          <span className="font-medium">ℹ️ {t('admin.generate.note')} :</span> {t('admin.generate.noteText')}
+                        </p>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex gap-3 pt-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setIsGenerateDialogOpen(false)}
+                          className="flex-1"
+                        >
+                          {t('common.cancel')}
+                        </Button>
+                        <Button 
+                          onClick={generateSlotsAdvanced} 
+                          className="flex-1 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700"
+                        >
+                          ⚡ {t('admin.generate.generate')}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Dialog d'ajout de fermeture */}
+              {isVacationDialogOpen && (
+                <div 
+                  className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+                  onClick={() => setIsVacationDialogOpen(false)}
+                >
+                  <div 
+                    className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-200"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center">
+                        <Calendar className="w-6 h-6 text-white" />
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-bold text-gray-900">{t('admin.closures.add')}</h2>
+                        <p className="text-sm text-gray-500">{t('admin.closures.title')}</p>
+                      </div>
+                    </div>
+                    
+                    <form onSubmit={handleAddVacation} className="space-y-5">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">📅 {t('admin.closures.startDate')}</Label>
+                          <Input
+                            type="date"
+                            value={vacationForm.startDate}
+                            onChange={(e) => setVacationForm({ ...vacationForm, startDate: e.target.value })}
+                            className="h-11"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">📅 {t('admin.closures.endDate')}</Label>
+                          <Input
+                            type="date"
+                            value={vacationForm.endDate}
+                            onChange={(e) => setVacationForm({ ...vacationForm, endDate: e.target.value })}
+                            className="h-11"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label className="text-sm font-medium text-gray-700 mb-2 block">📝 {t('admin.closures.reason')}</Label>
+                        <Input
+                          value={vacationForm.reason}
+                          onChange={(e) => setVacationForm({ ...vacationForm, reason: e.target.value })}
+                          placeholder={t('admin.closures.reason')}
+                          className="h-11"
+                        />
+                        <div className="flex gap-2 mt-2 flex-wrap">
+                          {['vacation', 'holiday', 'maintenance', 'privateEvent', 'closed'].map((key) => (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => setVacationForm({ ...vacationForm, reason: key })}
+                              className={`px-3 py-1.5 text-xs rounded-lg border-2 font-medium transition-all ${
+                                vacationForm.reason === key
+                                  ? "bg-orange-500 text-white border-orange-500"
+                                  : "bg-gray-50 text-gray-600 border-gray-200 hover:border-orange-300"
+                              }`}
+                            >
+                              {t(`admin.closureReasons.${key}`)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3 pt-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setIsVacationDialogOpen(false)}
+                          className="flex-1"
+                        >
+                          {t('common.cancel')}
+                        </Button>
+                        <Button type="submit" className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600">
+                          {t('admin.closures.add')}
+                        </Button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Dialog de fermeture d'un jour */}
+              {closureDialog && (
+                <div 
+                  className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+                  onClick={() => setClosureDialog(null)}
+                >
+                  <div 
+                    className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-200"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center">
+                        <span className="text-2xl">🚫</span>
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-bold text-gray-900">{t('admin.closureReasons.closed')}</h2>
+                        <p className="text-sm text-gray-500">
+                          {new Date(closureDialog.date + "T12:00:00").toLocaleDateString(i18n.language, { 
+                            weekday: 'long', 
+                            day: 'numeric', 
+                            month: 'long' 
+                          })}
+                        </p>
+                      </div>
+                    </div>
+
+                    {closureDialog.hasSlots && (
+                      <div className="mb-5 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                        <p className="text-sm text-amber-800 font-medium">
+                          ⚠️ {closureDialog.slotsCount} {closureDialog.slotsCount > 1 ? t('home.slot.slots') : t('home.slot.slot')} 
+                          {closureDialog.bookingsCount > 0 && (
+                            <span> ({closureDialog.bookingsCount} {t('admin.slots.bookings')})</span>
+                          )}
+                        </p>
+                      </div>
+                    )}
+                    
+                    <div className="space-y-5">
+                      <div>
+                        <Label className="text-sm font-medium text-gray-700 mb-2 block">📝 {t('admin.closures.reason')}</Label>
+                        <Input
+                          value={closureDialog.reason}
+                          onChange={(e) => setClosureDialog({ ...closureDialog, reason: e.target.value })}
+                          placeholder={t('admin.closureReasons.holiday')}
+                          className="h-11"
+                          autoFocus
+                        />
+                        <div className="flex gap-2 mt-2 flex-wrap">
+                          {['closed', 'holiday', 'maintenance', 'privateEvent', 'vacation'].map((key) => (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => setClosureDialog({ ...closureDialog, reason: key })}
+                              className={`px-3 py-1.5 text-xs rounded-lg border-2 font-medium transition-all ${
+                                closureDialog.reason === key
+                                  ? "bg-orange-500 text-white border-orange-500"
+                                  : "bg-gray-50 text-gray-600 border-gray-200 hover:border-orange-300"
+                              }`}
+                            >
+                              {t(`admin.closureReasons.${key}`)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3 pt-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setClosureDialog(null)}
+                          className="flex-1"
+                        >
+                          {t('common.cancel')}
+                        </Button>
+                        <Button 
+                          onClick={confirmClosureWithReason} 
+                          className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
+                        >
+                          {t('common.confirm')}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Popup d'édition rapide - centré sur mobile */}
+              {quickEdit && (
+                <div 
+                  className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center sm:block" 
+                  onClick={() => setQuickEdit(null)}
+                >
+                  <div
+                    className="bg-white rounded-xl shadow-2xl border border-gray-100 p-3 sm:p-4 w-[calc(100%-32px)] sm:w-auto sm:min-w-[220px] max-w-[280px] sm:max-w-none mx-4 sm:mx-0 sm:absolute animate-in fade-in zoom-in-95 duration-150"
+                    style={{ 
+                      left: typeof window !== 'undefined' && window.innerWidth >= 640 ? Math.min(Math.max(quickEdit.position.x - 110, 16), window.innerWidth - 236) : undefined,
+                      top: typeof window !== 'undefined' && window.innerWidth >= 640 ? Math.min(quickEdit.position.y + 8, window.innerHeight - 200) : undefined
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {quickEdit.field === "delete" ? (
+                      <>
+                        <p className="text-sm font-semibold text-gray-900 mb-3 text-center">{t('admin.slots.delete')} ?</p>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => confirmDelete(quickEdit.slotId)}
+                            className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+                          >
+                            {t('common.delete')}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setQuickEdit(null)}
+                            className="flex-1"
+                          >
+                            {t('common.cancel')}
+                          </Button>
+                        </div>
+                      </>
+                    ) : quickEdit.field === "sports" ? (
+                      <>
+                        <Label className="text-xs font-medium text-gray-500 mb-2 block">{t('admin.slots.sports')}</Label>
+                        <div className="space-y-1 mb-3">
+                          {sports.filter(s => s.enabled).map((sport) => (
+                            <button
+                              key={sport.id}
+                              onClick={() => toggleSportInQuickEdit(sport.id)}
+                              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                                quickEdit.selectedSports?.includes(sport.id)
+                                  ? "bg-blue-100 text-blue-800 border-2 border-blue-400"
+                                  : "bg-gray-50 text-gray-700 border-2 border-transparent hover:bg-gray-100"
+                              }`}
+                            >
+                              <span className="text-lg">{sport.icon}</span>
+                              <span className="font-medium">{sport.name}</span>
+                              {quickEdit.selectedSports?.includes(sport.id) && (
+                                <span className="ml-auto text-blue-600">✓</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={saveQuickEdit} className="flex-1">
+                            {t('common.save')}
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => setQuickEdit(null)} className="flex-1">
+                            {t('common.cancel')}
+                          </Button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <Label className="text-xs font-medium text-gray-500 mb-2 block">
+                          {quickEdit.field === "price" && `💰 ${t('admin.slots.price')} (${settings.branding?.currency || "CHF"})`}
+                          {quickEdit.field === "capacity" && `👥 ${t('admin.slots.maxCapacity')}`}
+                          {quickEdit.field === "duration" && `⏱️ ${t('admin.slots.duration')}`}
+                        </Label>
+                        <div className="flex gap-2 mb-2">
+                          <Input
+                            type="number"
+                            value={quickEdit.value}
+                            onChange={(e) => setQuickEdit({ ...quickEdit, value: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") saveQuickEdit()
+                              if (e.key === "Escape") setQuickEdit(null)
+                            }}
+                            className="h-9 text-sm font-medium"
+                            autoFocus
+                            min={1}
+                            step={quickEdit.field === "price" ? 5 : 1}
+                          />
+                          <Button size="sm" onClick={saveQuickEdit} className="h-9 px-4">
+                            OK
+                          </Button>
+                        </div>
+                        {quickEdit.field === "duration" && (
+                          <div className="flex gap-1">
+                            {[1, 2, 3, 4].map((h) => (
+                              <button
+                                key={h}
+                                onClick={() => saveQuickEditWithValue(h)}
+                                className={`flex-1 text-sm py-1.5 rounded-lg border-2 font-medium transition-all ${
+                                  quickEdit.value === h.toString()
+                                    ? "bg-blue-600 text-white border-blue-600"
+                                    : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:border-blue-300"
+                                }`}
+                              >
+                                {h}h
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {quickEdit.field === "capacity" && (
+                          <div className="flex gap-1">
+                            {[2, 4, 6, 8].map((c) => (
+                              <button
+                                key={c}
+                                onClick={() => saveQuickEditWithValue(c)}
+                                className={`flex-1 text-sm py-1.5 rounded-lg border-2 font-medium transition-all ${
+                                  quickEdit.value === c.toString()
+                                    ? "bg-blue-600 text-white border-blue-600"
+                                    : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:border-blue-300"
+                                }`}
+                              >
+                                {c}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {quickEdit.field === "price" && (
+                          <div className="flex gap-1">
+                            {[30, 50, 80, 100].map((p) => (
+                              <button
+                                key={p}
+                                onClick={() => saveQuickEditWithValue(p)}
+                                className={`flex-1 text-sm py-1.5 rounded-lg border-2 font-medium transition-all ${
+                                  quickEdit.value === p.toString()
+                                    ? "bg-blue-600 text-white border-blue-600"
+                                    : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-blue-50 hover:border-blue-300"
+                                }`}
+                              >
+                                {p}.-
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="slots" className="space-y-6">
+              {/* Header avec titre */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900">{t('admin.settings.title')}</h2>
+                  <p className="text-gray-500 mt-1">{t('admin.settings.subtitle')}</p>
+                </div>
+              </div>
+
+              {/* Horaires de travail - Design moderne */}
+              <Card className="p-6 bg-white border-0 shadow-lg rounded-xl">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
+                    <Calendar className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                      <h3 className="text-lg font-bold text-gray-900">{t('admin.settings.sections.workingHours')}</h3>
+                      <p className="text-sm text-gray-500">{t('admin.settings.sections.workingHoursDesc')}</p>
+                  </div>
+                  </div>
+                  
+                  {/* Boutons Enregistrer / Annuler */}
+                  {hasWorkingHoursChanged && (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={resetWorkingHours}
+                        variant="outline"
+                        className="h-9"
+                      >
+                        {t('common.cancel')}
+                      </Button>
+                      <Button
+                        onClick={saveWorkingHours}
+                        className="h-9 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-lg"
+                      >
+                        💾 {t('common.save')}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  {editableWorkingHours.map((wh) => (
+                    <div 
+                      key={wh.dayOfWeek} 
+                      className={`p-4 rounded-xl border-2 transition-all ${
+                        wh.enabled 
+                          ? "bg-blue-50/50 border-blue-200" 
+                          : "bg-gray-50 border-gray-100"
+                      }`}
+                    >
+                      <div className="flex items-center gap-4 flex-wrap">
+                        {/* Toggle jour */}
+                        <button
+                          onClick={() => {
+                            const updated = editableWorkingHours.map((w) =>
+                              w.dayOfWeek === wh.dayOfWeek ? { ...w, enabled: !w.enabled } : w,
+                            )
+                            setEditableWorkingHours(updated)
+                          }}
+                          className={`w-12 h-7 rounded-full relative transition-all ${
+                            wh.enabled ? "bg-blue-600" : "bg-gray-300"
+                          }`}
+                        >
+                          <div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-md transition-all ${
+                            wh.enabled ? "left-6" : "left-1"
+                          }`} />
+                        </button>
+
+                        {/* Nom du jour */}
+                        <span className={`font-semibold w-24 ${wh.enabled ? "text-gray-900" : "text-gray-400"}`}>
+                          {dayNames[wh.dayOfWeek]}
+                        </span>
+
+                        {wh.enabled && (
+                          <div className="flex items-center gap-4 flex-wrap flex-1">
+                            {/* Heure début */}
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-gray-500">{t('admin.generate.from')}</span>
+                              <input
+                                type="time"
+                                value={wh.startTime}
+                                onChange={(e) => {
+                                  const updated = editableWorkingHours.map((w) =>
+                                    w.dayOfWeek === wh.dayOfWeek ? { ...w, startTime: e.target.value } : w,
+                                  )
+                                  setEditableWorkingHours(updated)
+                                }}
+                                className="px-3 py-2 rounded-lg border-2 border-gray-200 focus:border-blue-400 focus:outline-none bg-white font-medium text-gray-700"
+                              />
+                            </div>
+
+                            {/* Heure fin */}
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-gray-500">{t('admin.generate.to')}</span>
+                              <input
+                                type="time"
+                                value={wh.endTime}
+                                onChange={(e) => {
+                                  const updated = editableWorkingHours.map((w) =>
+                                    w.dayOfWeek === wh.dayOfWeek ? { ...w, endTime: e.target.value } : w,
+                                  )
+                                  setEditableWorkingHours(updated)
+                                }}
+                                className="px-3 py-2 rounded-lg border-2 border-gray-200 focus:border-blue-400 focus:outline-none bg-white font-medium text-gray-700"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+
+              {/* Paramètres par défaut - Design moderne */}
+              <Card className="p-6 bg-white border-0 shadow-lg rounded-xl">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center">
+                    <DollarSign className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">{t('admin.settings.sections.defaults')}</h3>
+                    <p className="text-sm text-gray-500">{t('admin.settings.sections.defaultsDesc')}</p>
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-3 gap-6">
+                  {/* Durée */}
+                  <div className="space-y-3">
+                    <Label className="text-sm font-medium text-gray-700">⏱️ {t('admin.slots.duration')}</Label>
+                    <select
+                      value={settings.defaultSlotDuration}
+                      onChange={(e) => {
+                        const newSettings = { ...settings, defaultSlotDuration: Number.parseInt(e.target.value) }
+                        setSettingsState(newSettings)
+                        saveSettings(newSettings)
+                      }}
+                      className="w-full h-11 px-3 text-lg font-semibold rounded-lg border-2 border-gray-200 focus:border-emerald-400 focus:outline-none bg-white"
+                    >
+                      {Array.from({ length: 24 }, (_, i) => i + 1).map((h) => (
+                        <option key={h} value={h * 60}>{h}h</option>
+                      ))}
+                    </select>
+                    <div className="flex gap-1">
+                      {[1, 2, 3, 4].map((h) => (
+                        <button
+                          key={h}
+                          onClick={() => {
+                            const newSettings = { ...settings, defaultSlotDuration: h * 60 }
+                            setSettingsState(newSettings)
+                            saveSettings(newSettings)
+                          }}
+                          className={`flex-1 text-xs py-2 rounded-lg border-2 font-medium transition-all ${
+                            settings.defaultSlotDuration === h * 60
+                              ? "bg-emerald-600 text-white border-emerald-600"
+                              : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-emerald-50 hover:border-emerald-300"
+                          }`}
+                        >
+                          {h}h
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Prix */}
+                  <div className="space-y-3">
+                    <Label className="text-sm font-medium text-gray-700">💰 {t('admin.slots.price')} ({settings.branding?.currency || "CHF"})</Label>
+                    <Input
+                      type="number"
+                      value={settings.defaultPrice}
+                      onChange={(e) => {
+                        const newSettings = { ...settings, defaultPrice: Number.parseFloat(e.target.value) }
+                        setSettingsState(newSettings)
+                        saveSettings(newSettings)
+                      }}
+                      className="h-11 text-lg font-semibold"
+                    />
+                    <div className="flex gap-1">
+                      {[30, 50, 80, 100].map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => {
+                            const newSettings = { ...settings, defaultPrice: p }
+                            setSettingsState(newSettings)
+                            saveSettings(newSettings)
+                          }}
+                          className={`flex-1 text-xs py-2 rounded-lg border-2 font-medium transition-all ${
+                            settings.defaultPrice === p
+                              ? "bg-emerald-600 text-white border-emerald-600"
+                              : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-emerald-50 hover:border-emerald-300"
+                          }`}
+                        >
+                          {p}.-
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Capacité */}
+                  <div className="space-y-3">
+                    <Label className="text-sm font-medium text-gray-700">👥 {t('admin.slots.maxCapacity')}</Label>
+                    <Input
+                      type="number"
+                      value={settings.defaultMaxCapacity}
+                      onChange={(e) => {
+                        const newSettings = { ...settings, defaultMaxCapacity: Number.parseInt(e.target.value) }
+                        setSettingsState(newSettings)
+                        saveSettings(newSettings)
+                      }}
+                      className="h-11 text-lg font-semibold"
+                    />
+                    <div className="flex gap-1">
+                      {[2, 4, 6, 8].map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => {
+                            const newSettings = { ...settings, defaultMaxCapacity: c }
+                            setSettingsState(newSettings)
+                            saveSettings(newSettings)
+                          }}
+                          className={`flex-1 text-xs py-2 rounded-lg border-2 font-medium transition-all ${
+                            settings.defaultMaxCapacity === c
+                              ? "bg-emerald-600 text-white border-emerald-600"
+                              : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-emerald-50 hover:border-emerald-300"
+                          }`}
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Délai minimum de réservation */}
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <Label className="text-sm font-medium text-gray-700 mb-2 block">
+                    ⏰ {t('admin.settings.defaults.minBookingAdvance')}
+                  </Label>
+                  <p className="text-xs text-gray-500 mb-3">{t('admin.settings.defaults.minBookingAdvanceDesc')}</p>
+                  <select
+                    value={settings.minBookingAdvance || 0}
+                    onChange={(e) => {
+                      const newSettings = { ...settings, minBookingAdvance: Number.parseInt(e.target.value) }
+                      setSettingsState(newSettings)
+                      saveSettings(newSettings)
+                    }}
+                    className="w-full h-11 px-3 rounded-lg border-2 border-gray-200 focus:border-emerald-400 focus:outline-none bg-white"
+                  >
+                    <option value={0}>{t('admin.settings.defaults.noMinimum')}</option>
+                    <option value={1}>1 min</option>
+                    <option value={5}>5 min</option>
+                    <option value={10}>10 min</option>
+                    <option value={15}>15 min</option>
+                    <option value={30}>30 min</option>
+                    <option value={45}>45 min</option>
+                    <option value={60}>1h</option>
+                    <option value={90}>1h30</option>
+                    <option value={120}>2h</option>
+                    <option value={150}>2h30</option>
+                    <option value={180}>3h</option>
+                    <option value={240}>4h</option>
+                    <option value={300}>5h</option>
+                    <option value={360}>6h</option>
+                    <option value={480}>8h</option>
+                    <option value={720}>12h</option>
+                    <option value={1440}>24h</option>
+                    <option value={2880}>48h</option>
+                  </select>
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {[0, 15, 30, 60, 120, 240].map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => {
+                          const newSettings = { ...settings, minBookingAdvance: m }
+                          setSettingsState(newSettings)
+                          saveSettings(newSettings)
+                        }}
+                        className={`px-3 text-xs py-2 rounded-lg border-2 font-medium transition-all ${
+                          (settings.minBookingAdvance || 0) === m
+                            ? "bg-emerald-600 text-white border-emerald-600"
+                            : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-emerald-50 hover:border-emerald-300"
+                        }`}
+                      >
+                        {m === 0 ? '0' : m < 60 ? `${m}min` : `${m / 60}h`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+
+              {/* Sécurité - Changement de mot de passe */}
+              <Card className="p-6 bg-white border-0 shadow-lg rounded-xl">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-slate-600 to-slate-800 flex items-center justify-center">
+                    <Shield className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">{t('admin.settings.sections.security')}</h3>
+                    <p className="text-sm text-gray-500">{t('admin.settings.security.changePassword')}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Nom d'utilisateur (lecture seule) */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 mb-2 block">👤 {t('login.username')}</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={adminCredentials.username}
+                        disabled
+                        className="h-11 bg-gray-50 text-gray-500"
+                      />
+                      <span className="text-xs text-gray-400 whitespace-nowrap">({t('common.none')})</span>
+                    </div>
+                  </div>
+
+                  {/* Changer le mot de passe */}
+                  <div className="pt-4 border-t border-gray-200">
+                    <h4 className="font-medium text-gray-900 mb-4 flex items-center gap-2">
+                      <Key className="w-4 h-4" /> {t('admin.settings.security.changePassword')}
+                    </h4>
+                    
+                    <div className="space-y-4">
+                      {/* Mot de passe actuel */}
+                      <div>
+                        <Label className="text-sm font-medium text-gray-700 mb-2 block">{t('admin.settings.security.currentPassword')}</Label>
+                        <div className="relative">
+                          <Input
+                            type={passwordForm.showCurrent ? "text" : "password"}
+                            value={passwordForm.currentPassword}
+                            onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+                            placeholder={t('admin.settings.security.currentPassword')}
+                            className="h-11 pr-12"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setPasswordForm({ ...passwordForm, showCurrent: !passwordForm.showCurrent })}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                          >
+                            {passwordForm.showCurrent ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Nouveau mot de passe */}
+                      <div>
+                        <Label className="text-sm font-medium text-gray-700 mb-2 block">{t('admin.settings.security.newPassword')}</Label>
+                        <div className="relative">
+                          <Input
+                            type={passwordForm.showNew ? "text" : "password"}
+                            value={passwordForm.newPassword}
+                            onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                            placeholder={t('admin.settings.security.newPassword')}
+                            className="h-11 pr-12"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setPasswordForm({ ...passwordForm, showNew: !passwordForm.showNew })}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                          >
+                            {passwordForm.showNew ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">{t('admin.settings.security.minChars')}</p>
+                      </div>
+
+                      {/* Confirmer le mot de passe */}
+                      <div>
+                        <Label className="text-sm font-medium text-gray-700 mb-2 block">{t('admin.settings.security.confirmPassword')}</Label>
+                        <div className="relative">
+                          <Input
+                            type={passwordForm.showConfirm ? "text" : "password"}
+                            value={passwordForm.confirmPassword}
+                            onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+                            placeholder={t('admin.settings.security.confirmPassword')}
+                            className="h-11 pr-12"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setPasswordForm({ ...passwordForm, showConfirm: !passwordForm.showConfirm })}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                          >
+                            {passwordForm.showConfirm ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Messages d'erreur/succès */}
+                      {passwordError && (
+                        <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm flex items-center gap-2">
+                          <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          {passwordError}
+                        </div>
+                      )}
+                      {passwordSuccess && (
+                        <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm flex items-center gap-2">
+                          <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          {passwordSuccess}
+                        </div>
+                      )}
+
+                      {/* Bouton de sauvegarde */}
+                      <Button
+                        onClick={handleChangePassword}
+                        className="w-full h-11 bg-slate-800 hover:bg-slate-900"
+                        disabled={!passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword}
+                      >
+                        <Key className="w-4 h-4 mr-2" />
+                        {t('admin.settings.security.changePassword')}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+
+              {/* Configuration Email (SMTP) */}
+              <Card className="p-6 bg-white border-0 shadow-lg rounded-xl">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
+                    <Mail className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">{t('admin.settings.smtp.title')}</h3>
+                    <p className="text-sm text-gray-500">{t('admin.settings.smtp.description')}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  {/* Activer SMTP */}
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
+                    <div>
+                      <div className="font-medium text-gray-900">{t('admin.settings.smtp.enabled')}</div>
+                      <p className="text-sm text-gray-500">{t('admin.settings.smtp.description')}</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.smtp?.enabled || false}
+                        onChange={(e) => {
+                          const newSettings = { 
+                            ...settings, 
+                            smtp: { 
+                              ...settings.smtp,
+                              enabled: e.target.checked,
+                              host: settings.smtp?.host || '',
+                              port: settings.smtp?.port || 587,
+                              secure: settings.smtp?.secure || false,
+                              user: settings.smtp?.user || '',
+                              password: settings.smtp?.password || '',
+                              fromEmail: settings.smtp?.fromEmail || '',
+                              fromName: settings.smtp?.fromName || '',
+                              notifyTeamOnBooking: settings.smtp?.notifyTeamOnBooking || false,
+                              teamEmails: settings.smtp?.teamEmails || [],
+                              sendConfirmationToClient: settings.smtp?.sendConfirmationToClient || true,
+                            } 
+                          }
+                          setSettingsState(newSettings)
+                          saveSettings(newSettings)
+                        }}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                  </div>
+
+                  {settings.smtp?.enabled && (
+                    <>
+                      {/* Configuration serveur */}
+                      <div className="grid sm:grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">🖥️ {t('admin.settings.smtp.host')}</Label>
+                          <Input
+                            value={settings.smtp?.host || ''}
+                            onChange={(e) => {
+                              const newSettings = { 
+                                ...settings, 
+                                smtp: { ...settings.smtp!, host: e.target.value } 
+                              }
+                              setSettingsState(newSettings)
+                              saveSettings(newSettings)
+                            }}
+                            placeholder={t('admin.settings.smtp.hostPlaceholder')}
+                            className="h-11"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">🔌 {t('admin.settings.smtp.port')}</Label>
+                          <Input
+                            type="number"
+                            value={settings.smtp?.port || 587}
+                            onChange={(e) => {
+                              const newSettings = { 
+                                ...settings, 
+                                smtp: { ...settings.smtp!, port: parseInt(e.target.value) || 587 } 
+                              }
+                              setSettingsState(newSettings)
+                              saveSettings(newSettings)
+                            }}
+                            className="h-11"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid sm:grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">👤 {t('admin.settings.smtp.user')}</Label>
+                          <Input
+                            value={settings.smtp?.user || ''}
+                            onChange={(e) => {
+                              const newSettings = { 
+                                ...settings, 
+                                smtp: { ...settings.smtp!, user: e.target.value } 
+                              }
+                              setSettingsState(newSettings)
+                              saveSettings(newSettings)
+                            }}
+                            placeholder={t('admin.settings.smtp.userPlaceholder')}
+                            className="h-11"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">🔐 {t('admin.settings.smtp.password')}</Label>
+                          <div className="relative">
+                            <Input
+                              type="password"
+                              value={smtpPasswordInput}
+                              onChange={(e) => {
+                                setSmtpPasswordInput(e.target.value)
+                                if (e.target.value) {
+                                  const newSettings = { 
+                                    ...settings, 
+                                    smtp: { ...settings.smtp!, password: e.target.value } 
+                                  }
+                                  setSettingsState(newSettings)
+                                  saveSettings(newSettings)
+                                }
+                              }}
+                              onFocus={() => {
+                                // Effacer le placeholder quand on focus si un mot de passe existe
+                                if (settings.smtp?.password && smtpPasswordInput === '') {
+                                  setSmtpPasswordInput('')
+                                }
+                              }}
+                              placeholder={settings.smtp?.password ? '••••••••••••' : t('admin.settings.smtp.passwordPlaceholder')}
+                              className="h-11 pr-20"
+                            />
+                            {settings.smtp?.password && (
+                              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">✓ Enregistré</span>
+                              </div>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {settings.smtp?.password 
+                              ? t('admin.settings.smtp.passwordSaved')
+                              : t('admin.settings.smtp.passwordHint')}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                        <input
+                          type="checkbox"
+                          id="smtp-secure"
+                          checked={settings.smtp?.secure || false}
+                          onChange={(e) => {
+                            const newSettings = { 
+                              ...settings, 
+                              smtp: { ...settings.smtp!, secure: e.target.checked } 
+                            }
+                            setSettingsState(newSettings)
+                            saveSettings(newSettings)
+                          }}
+                          className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                        />
+                        <label htmlFor="smtp-secure" className="text-sm text-gray-700 cursor-pointer">
+                          🔒 {t('admin.settings.smtp.secure')}
+                        </label>
+                      </div>
+
+                      <div className="grid sm:grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">📧 {t('admin.settings.smtp.fromEmail')}</Label>
+                          <Input
+                            value={settings.smtp?.fromEmail || ''}
+                            onChange={(e) => {
+                              const newSettings = { 
+                                ...settings, 
+                                smtp: { ...settings.smtp!, fromEmail: e.target.value } 
+                              }
+                              setSettingsState(newSettings)
+                              saveSettings(newSettings)
+                            }}
+                            placeholder={t('admin.settings.smtp.fromEmailPlaceholder')}
+                            className="h-11"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">🏷️ {t('admin.settings.smtp.fromName')}</Label>
+                          <Input
+                            value={settings.smtp?.fromName || ''}
+                            onChange={(e) => {
+                              const newSettings = { 
+                                ...settings, 
+                                smtp: { ...settings.smtp!, fromName: e.target.value } 
+                              }
+                              setSettingsState(newSettings)
+                              saveSettings(newSettings)
+                            }}
+                            placeholder={t('admin.settings.smtp.fromNamePlaceholder')}
+                            className="h-11"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Notifications */}
+                      <div className="pt-4 border-t border-gray-200">
+                        <h4 className="font-medium text-gray-900 mb-4">🔔 {t('admin.settings.smtp.notifications')}</h4>
+                        
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                            <input
+                              type="checkbox"
+                              id="smtp-confirm-client"
+                              checked={settings.smtp?.sendConfirmationToClient !== false}
+                              onChange={(e) => {
+                                const newSettings = { 
+                                  ...settings, 
+                                  smtp: { ...settings.smtp!, sendConfirmationToClient: e.target.checked } 
+                                }
+                                setSettingsState(newSettings)
+                                saveSettings(newSettings)
+                              }}
+                              className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                            />
+                            <label htmlFor="smtp-confirm-client" className="text-sm text-gray-700 cursor-pointer">
+                              ✉️ {t('admin.settings.smtp.sendConfirmationToClient')}
+                            </label>
+                          </div>
+
+                          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                            <input
+                              type="checkbox"
+                              id="smtp-notify-team"
+                              checked={settings.smtp?.notifyTeamOnBooking || false}
+                              onChange={(e) => {
+                                const newSettings = { 
+                                  ...settings, 
+                                  smtp: { ...settings.smtp!, notifyTeamOnBooking: e.target.checked } 
+                                }
+                                setSettingsState(newSettings)
+                                saveSettings(newSettings)
+                              }}
+                              className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                            />
+                            <label htmlFor="smtp-notify-team" className="text-sm text-gray-700 cursor-pointer">
+                              👥 {t('admin.settings.smtp.notifyTeamOnBooking')}
+                            </label>
+                          </div>
+
+                          {settings.smtp?.notifyTeamOnBooking && (
+                            <div>
+                              <Label className="text-sm font-medium text-gray-700 mb-2 block">📬 {t('admin.settings.smtp.teamEmails')}</Label>
+                              <Input
+                                value={(settings.smtp?.teamEmails || []).join(', ')}
+                                onChange={(e) => {
+                                  const emails = e.target.value.split(',').map(email => email.trim()).filter(email => email)
+                                  const newSettings = { 
+                                    ...settings, 
+                                    smtp: { ...settings.smtp!, teamEmails: emails } 
+                                  }
+                                  setSettingsState(newSettings)
+                                  saveSettings(newSettings)
+                                }}
+                                placeholder={t('admin.settings.smtp.teamEmailsPlaceholder')}
+                                className="h-11"
+                              />
+                              <p className="text-xs text-gray-500 mt-1">{t('admin.settings.smtp.teamEmailsHint')}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Bouton test email */}
+                      <div className="pt-4 border-t border-gray-200">
+                        <Button
+                          onClick={async () => {
+                            if (!settings.smtp?.host || !settings.smtp?.user || !settings.smtp?.password || !settings.smtp?.fromEmail) {
+                              alert('Veuillez remplir tous les champs de configuration SMTP')
+                              return
+                            }
+                            
+                            const testEmail = settings.smtp?.user || settings.smtp?.fromEmail
+                            const primaryColor = settings.branding?.primaryColor || '#3b82f6'
+                            const siteName = settings.branding?.siteName || 'SportSlot'
+                            const logoUrl = settings.branding?.logoUrl || ''
+                            const logoIcon = settings.branding?.logoIcon || '🏆'
+                            setSmtpTestStatus('sending')
+                            
+                            try {
+                              const response = await fetch('/api/email', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  to: testEmail,
+                                  subject: `✅ Test SMTP - ${siteName}`,
+                                  html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: Arial, Helvetica, sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f3f4f6; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width: 600px;">
+          <!-- Header -->
+          <tr>
+            <td style="background: ${primaryColor}; border-radius: 16px 16px 0 0; padding: 40px 30px; text-align: center;">
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding-bottom: 20px;">
+                    <table cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="width: 80px; height: 80px; background: rgba(255,255,255,0.2); border-radius: 50%; text-align: center; vertical-align: middle;">
+                          <span style="font-size: 40px; line-height: 80px;">✅</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="color: white; font-size: 28px; font-weight: 700; padding-bottom: 10px;">
+                    ${t('emails.client.configValid')}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="color: rgba(255,255,255,0.9); font-size: 16px;">
+                    ${t('emails.client.configValidDesc')}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="background: white; padding: 30px; border-radius: 0 0 16px 16px;">
+              <!-- Site Name -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 25px;">
+                <tr>
+                  <td align="center">
+                    <table cellpadding="0" cellspacing="0" style="background: ${primaryColor}15; padding: 15px 25px; border-radius: 12px;">
+                      <tr>
+                        <td style="vertical-align: middle; padding-right: 10px;">
+                          ${logoUrl ? `<img src="cid:logo" alt="Logo" width="35" height="35" style="display: block; object-fit: contain;">` : `<span style="font-size: 30px;">${logoIcon}</span>`}
+                        </td>
+                        <td style="font-size: 20px; font-weight: 700; color: ${primaryColor}; vertical-align: middle;">${siteName}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+              
+              <!-- Config Details -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="background: #f8fafc; border-radius: 12px; border-left: 4px solid ${primaryColor};">
+                <tr>
+                  <td style="padding: 20px;">
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="color: #1e293b; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; padding-bottom: 15px;">
+                          📊 ${t('emails.client.configDetails')}
+                        </td>
+                      </tr>
+                    </table>
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="padding: 10px 0; color: #64748b; font-size: 14px; border-bottom: 1px solid #e2e8f0;">${t('emails.client.smtpServer')}</td>
+                        <td style="padding: 10px 0; text-align: right; color: #1e293b; font-weight: 600; font-family: monospace; border-bottom: 1px solid #e2e8f0;">${settings.smtp?.host}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 10px 0; color: #64748b; font-size: 14px; border-bottom: 1px solid #e2e8f0;">Port</td>
+                        <td style="padding: 10px 0; text-align: right; color: #1e293b; font-weight: 600; font-family: monospace; border-bottom: 1px solid #e2e8f0;">${settings.smtp?.port}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 10px 0; color: #64748b; font-size: 14px; border-bottom: 1px solid #e2e8f0;">SSL/TLS</td>
+                        <td style="padding: 10px 0; text-align: right; border-bottom: 1px solid #e2e8f0;">
+                          <span style="background: ${settings.smtp?.secure ? '#dcfce7' : '#fef9c3'}; color: ${settings.smtp?.secure ? '#166534' : '#854d0e'}; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;">
+                            ${settings.smtp?.secure ? '🔒 ' + t('emails.client.sslEnabled') : '🔓 ' + t('emails.client.sslStarttls')}
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 10px 0; color: #64748b; font-size: 14px;">${t('emails.client.sender')}</td>
+                        <td style="padding: 10px 0; text-align: right; color: #1e293b; font-weight: 600;">${settings.smtp?.fromEmail}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+              
+              <!-- Success Message -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-top: 20px; background: #f0fdf4; border-radius: 12px;">
+                <tr>
+                  <td style="padding: 20px; text-align: center; color: #166534; font-size: 15px;">
+                    🎉 ${t('emails.client.successMessage')}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          
+          <!-- Footer -->
+          <tr>
+            <td style="text-align: center; padding: 25px 20px;">
+              <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+                ${t('emails.client.testSentOn')} ${new Date().toLocaleString(i18n.language, { dateStyle: 'full', timeStyle: 'short' })}
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+                                  `,
+                                  logoBase64: logoUrl || undefined,
+                                  smtpSettings: {
+                                    host: settings.smtp.host,
+                                    port: settings.smtp.port,
+                                    secure: settings.smtp.secure,
+                                    user: settings.smtp.user,
+                                    password: settings.smtp.password,
+                                    fromEmail: settings.smtp.fromEmail,
+                                    fromName: settings.smtp.fromName || settings.branding?.siteName || 'SportSlot'
+                                  }
+                                })
+                              })
+                              
+                              const data = await response.json()
+                              if (data.success) {
+                                setSmtpTestStatus('success')
+                                setTimeout(() => setSmtpTestStatus('idle'), 3000)
+                              } else {
+                                setSmtpTestStatus('error')
+                                alert(`Erreur: ${data.error}`)
+                                setTimeout(() => setSmtpTestStatus('idle'), 3000)
+                              }
+                            } catch (error) {
+                              setSmtpTestStatus('error')
+                              alert(`Erreur: ${error instanceof Error ? error.message : 'Erreur inconnue'}`)
+                              setTimeout(() => setSmtpTestStatus('idle'), 3000)
+                            }
+                          }}
+                          disabled={smtpTestStatus === 'sending'}
+                          className={`w-full h-11 ${
+                            smtpTestStatus === 'success' 
+                              ? 'bg-green-600 hover:bg-green-700' 
+                              : smtpTestStatus === 'error'
+                              ? 'bg-red-600 hover:bg-red-700'
+                              : 'bg-blue-600 hover:bg-blue-700'
+                          } text-white`}
+                        >
+                          {smtpTestStatus === 'sending' ? (
+                            <>⏳ {t('common.loading')}</>
+                          ) : smtpTestStatus === 'success' ? (
+                            <>✅ {t('admin.settings.smtp.testEmailSent')}</>
+                          ) : smtpTestStatus === 'error' ? (
+                            <>❌ {t('admin.settings.smtp.testEmailError')}</>
+                          ) : (
+                            <>📧 {t('admin.settings.smtp.testEmail')}</>
+                          )}
+                        </Button>
+                        <p className="text-xs text-gray-500 mt-2 text-center">
+                          Un email de test sera envoyé à: {settings.smtp?.user || settings.smtp?.fromEmail || '...'}
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </Card>
+
+              {/* Personnalisation / Branding - En bas car rarement modifié */}
+              <Card className="p-6 bg-white border-0 shadow-lg rounded-xl">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center">
+                    <Building2 className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">{t('admin.settings.sections.branding')}</h3>
+                    <p className="text-sm text-gray-500">{t('admin.settings.sections.business')}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  {/* Nom et description */}
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium text-gray-700 mb-2 block">🏢 {t('admin.settings.branding.siteName')}</Label>
+                      <Input
+                        value={settings.branding?.siteName || "SportSlot"}
+                        onChange={(e) => {
+                          const newSettings = { 
+                            ...settings, 
+                            branding: { ...settings.branding, siteName: e.target.value } 
+                          }
+                          setSettingsState(newSettings)
+                          saveSettings(newSettings)
+                        }}
+                        placeholder="SportSlot"
+                        className="h-11"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium text-gray-700 mb-2 block">📝 {t('admin.settings.branding.siteDescription')}</Label>
+                      <Input
+                        value={settings.branding?.siteDescription || ""}
+                        onChange={(e) => {
+                          const newSettings = { 
+                            ...settings, 
+                            branding: { ...settings.branding, siteDescription: e.target.value } 
+                          }
+                          setSettingsState(newSettings)
+                          saveSettings(newSettings)
+                        }}
+                        placeholder={t('home.hero.subtitle')}
+                        className="h-11"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Titre de l'onglet */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 mb-2 block">🏷️ {t('admin.settings.branding.siteTitle')}</Label>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-500 whitespace-nowrap">{settings.branding?.siteName || "SportSlot"} -</span>
+                        <Input
+                        value={settings.branding?.siteTitle || ""}
+                          onChange={(e) => {
+                            const newSettings = { 
+                              ...settings, 
+                            branding: { ...settings.branding, siteTitle: e.target.value } 
+                            }
+                            setSettingsState(newSettings)
+                            saveSettings(newSettings)
+                          }}
+                        placeholder={t('admin.settings.branding.siteTitlePlaceholder')}
+                        className="h-11 flex-1"
+                      />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">{t('admin.settings.branding.siteTitleHint')}</p>
+                  </div>
+
+                  {/* Logo */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 mb-3 block">🖼️ {t('admin.settings.branding.logo')}</Label>
+                    
+                    {/* Si une image est déjà définie */}
+                    {settings.branding?.logoUrl ? (
+                      <div className="space-y-4">
+                        {/* Aperçu de l'image actuelle - responsive */}
+                        <div className="p-3 sm:p-4 bg-gray-50 rounded-xl border-2 border-gray-200">
+                          <div className="flex items-center gap-3 sm:gap-4">
+                            <div 
+                              className="w-12 h-12 sm:w-16 sm:h-16 rounded-lg sm:rounded-xl flex items-center justify-center overflow-hidden flex-shrink-0"
+                              style={{ 
+                                backgroundColor: settings.branding?.logoBackground !== false 
+                                  ? (settings.branding?.primaryColor || "#3b82f6") 
+                                  : "transparent",
+                                backgroundImage: settings.branding?.logoBackground === false 
+                                  ? "linear-gradient(45deg, #e5e7eb 25%, transparent 25%), linear-gradient(-45deg, #e5e7eb 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e5e7eb 75%), linear-gradient(-45deg, transparent 75%, #e5e7eb 75%)"
+                                  : "none",
+                                backgroundSize: "8px 8px",
+                                backgroundPosition: "0 0, 0 4px, 4px -4px, -4px 0px"
+                              }}
+                            >
+                              <img 
+                                src={settings.branding.logoUrl} 
+                                alt="Logo" 
+                                className="w-9 h-9 sm:w-12 sm:h-12 object-contain"
+                                onError={(e) => { (e.target as HTMLImageElement).src = '' }}
+                              />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs sm:text-sm font-medium text-gray-900">{t('admin.settings.branding.currentImage')}</p>
+                              <p className="text-[10px] sm:text-xs text-gray-500 truncate">{settings.branding.logoUrl}</p>
+                            </div>
+                          </div>
+                          {/* Boutons en dessous sur mobile, à côté sur desktop */}
+                          <div className="flex gap-2 mt-3">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                const newSettings = { 
+                                  ...settings, 
+                                  branding: { ...settings.branding, logoUrl: "", logoOriginalUrl: "" } 
+                                }
+                                setSettingsState(newSettings)
+                                saveSettings(newSettings)
+                              }}
+                              className="flex-1 sm:flex-none text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 text-xs sm:text-sm"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1" />
+                              {t('common.delete')}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                // Utiliser l'image originale si disponible, sinon l'image actuelle
+                                const originalImage = settings.branding?.logoOriginalUrl || settings.branding?.logoUrl || ""
+                                setCropImageSrc(originalImage)
+                                setCropPosition({ x: 0, y: 0 })
+                                setCropZoom(1)
+                                setIsLogoCropperOpen(true)
+                              }}
+                              className="flex-1 sm:flex-none text-blue-600 hover:text-blue-700 hover:bg-blue-50 border-blue-200 text-xs sm:text-sm"
+                            >
+                              <Edit className="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1" />
+                              {t('common.crop')}
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Option arrière-plan */}
+                        <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg">
+                          <Checkbox
+                            id="logoBackground"
+                            checked={settings.branding?.logoBackground !== false}
+                            onCheckedChange={(checked) => {
+                              const newSettings = { 
+                                ...settings, 
+                                branding: { ...settings.branding, logoBackground: checked as boolean } 
+                              }
+                              setSettingsState(newSettings)
+                              saveSettings(newSettings)
+                            }}
+                          />
+                          <label htmlFor="logoBackground" className="text-sm text-gray-700 cursor-pointer">
+                            {t('admin.settings.branding.logoBackground')}
+                          </label>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {/* Tabs URL / Upload */}
+                        <div className="flex gap-2 p-1 bg-gray-100 rounded-lg w-fit">
+                          <button
+                            onClick={() => setLogoInputMode("url")}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
+                              logoInputMode === "url" 
+                                ? "bg-white text-gray-900 shadow-sm" 
+                                : "text-gray-600 hover:text-gray-900"
+                            }`}
+                          >
+                            <Link className="w-4 h-4" />
+                            {t('admin.settings.branding.linkUrl')}
+                          </button>
+                          <button
+                            onClick={() => setLogoInputMode("upload")}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
+                              logoInputMode === "upload" 
+                                ? "bg-white text-gray-900 shadow-sm" 
+                                : "text-gray-600 hover:text-gray-900"
+                            }`}
+                          >
+                            <Upload className="w-4 h-4" />
+                            {t('common.upload')}
+                          </button>
+                        </div>
+
+                        {logoInputMode === "url" ? (
+                          <div>
+                            <div className="flex gap-2">
+                              <Input
+                                value={logoUrlInput}
+                                onChange={(e) => setLogoUrlInput(e.target.value)}
+                          placeholder="https://exemple.com/mon-logo.png"
+                                className="h-11 flex-1"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && logoUrlInput.trim()) {
+                                    e.preventDefault()
+                                    // Déclencher l'import
+                                    setIsLoadingLogoUrl(true)
+                                    const img = new Image()
+                                    img.crossOrigin = "anonymous"
+                                    img.onload = () => {
+                                      // Convertir en base64 via canvas
+                                      const canvas = document.createElement('canvas')
+                                      canvas.width = img.naturalWidth
+                                      canvas.height = img.naturalHeight
+                                      const ctx = canvas.getContext('2d')
+                                      if (ctx) {
+                                        ctx.drawImage(img, 0, 0)
+                                        const base64 = canvas.toDataURL('image/png')
+                                        setCropImageSrc(base64)
+                                        setCropPosition({ x: 0, y: 0 })
+                                        setCropZoom(1)
+                                        setIsLogoCropperOpen(true)
+                                      }
+                                      setIsLoadingLogoUrl(false)
+                                      setLogoUrlInput("")
+                                    }
+                                    img.onerror = () => {
+                                      // Si cross-origin échoue, utiliser l'URL directement
+                                      setCropImageSrc(logoUrlInput.trim())
+                                      setCropPosition({ x: 0, y: 0 })
+                                      setCropZoom(1)
+                                      setIsLogoCropperOpen(true)
+                                      setIsLoadingLogoUrl(false)
+                                      setLogoUrlInput("")
+                                    }
+                                    img.src = logoUrlInput.trim()
+                                  }
+                                }}
+                              />
+                              <Button
+                                onClick={() => {
+                                  if (!logoUrlInput.trim()) return
+                                  setIsLoadingLogoUrl(true)
+                                  const img = new Image()
+                                  img.crossOrigin = "anonymous"
+                                  img.onload = () => {
+                                    // Convertir en base64 via canvas
+                                    const canvas = document.createElement('canvas')
+                                    canvas.width = img.naturalWidth
+                                    canvas.height = img.naturalHeight
+                                    const ctx = canvas.getContext('2d')
+                                    if (ctx) {
+                                      ctx.drawImage(img, 0, 0)
+                                      const base64 = canvas.toDataURL('image/png')
+                                      setCropImageSrc(base64)
+                                      setCropPosition({ x: 0, y: 0 })
+                                      setCropZoom(1)
+                                      setIsLogoCropperOpen(true)
+                                    }
+                                    setIsLoadingLogoUrl(false)
+                                    setLogoUrlInput("")
+                                  }
+                                  img.onerror = () => {
+                                    // Si cross-origin échoue, utiliser l'URL directement
+                                    setCropImageSrc(logoUrlInput.trim())
+                                    setCropPosition({ x: 0, y: 0 })
+                                    setCropZoom(1)
+                                    setIsLogoCropperOpen(true)
+                                    setIsLoadingLogoUrl(false)
+                                    setLogoUrlInput("")
+                                  }
+                                  img.src = logoUrlInput.trim()
+                                }}
+                                disabled={!logoUrlInput.trim() || isLoadingLogoUrl}
+                                className="h-11 px-6 bg-blue-600 hover:bg-blue-700"
+                              >
+                                {isLoadingLogoUrl ? (
+                                  <span className="flex items-center gap-2">
+                                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    {t('common.loading')}
+                                  </span>
+                                ) : (
+                                  t('common.import')
+                                )}
+                              </Button>
+                      </div>
+                            <p className="text-xs text-gray-500 mt-1">URL → {t('common.import')}</p>
+                          </div>
+                        ) : (
+                          <div>
+                            <input
+                              ref={logoFileInputRef}
+                              type="file"
+                              accept="image/png,image/jpeg,image/jpg,image/svg+xml,image/webp"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0]
+                                if (file) {
+                                  const reader = new FileReader()
+                                  reader.onload = (event) => {
+                                    const result = event.target?.result as string
+                                    setCropImageSrc(result)
+                                    setIsLogoCropperOpen(true)
+                                  }
+                                  reader.readAsDataURL(file)
+                                }
+                                e.target.value = ""
+                              }}
+                            />
+                            <div
+                              onClick={() => logoFileInputRef.current?.click()}
+                              onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-blue-500', 'bg-blue-50') }}
+                              onDragLeave={(e) => { e.preventDefault(); e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50') }}
+                              onDrop={(e) => {
+                                e.preventDefault()
+                                e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50')
+                                const file = e.dataTransfer.files?.[0]
+                                if (file && file.type.startsWith('image/')) {
+                                  const reader = new FileReader()
+                                  reader.onload = (event) => {
+                                    const result = event.target?.result as string
+                                    setCropImageSrc(result)
+                                    setIsLogoCropperOpen(true)
+                                  }
+                                  reader.readAsDataURL(file)
+                                }
+                              }}
+                              className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-gray-400 transition-colors"
+                            >
+                              <Upload className="w-10 h-10 mx-auto text-gray-400 mb-3" />
+                              <p className="text-sm font-medium text-gray-700">{t('admin.agenda.dragOrClick')}</p>
+                              <p className="text-xs text-gray-500 mt-1">PNG, JPG, SVG, WebP • Max 5MB</p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Ou choisir une icône */}
+                        <div className="pt-2">
+                          <p className="text-xs text-gray-500 mb-2">{t('admin.settings.branding.orUseDefaultIcon')} :</p>
+                          <div className="flex gap-1.5 flex-wrap">
+                          {["🏆", "⚽", "🎾", "🏀", "🎯", "🏋️", "🏊", "⛳", "🎿", "🚴", "🏟️", "💪"].map((icon) => (
+                            <button
+                              key={icon}
+                              onClick={() => {
+                                const newSettings = { 
+                                  ...settings, 
+                                  branding: { ...settings.branding, logoIcon: icon, logoUrl: "" } 
+                                }
+                                setSettingsState(newSettings)
+                                saveSettings(newSettings)
+                              }}
+                                className={`w-10 h-10 text-xl rounded-lg border-2 transition-all ${
+                                !settings.branding?.logoUrl && settings.branding?.logoIcon === icon
+                                    ? "bg-blue-100 border-blue-500 scale-110"
+                                    : "bg-gray-50 border-gray-200 hover:border-blue-300 hover:scale-105"
+                              }`}
+                            >
+                              {icon}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    )}
+
+                    {/* Aperçu du logo dans le header */}
+                    <div className="mt-4 p-4 bg-gradient-to-r from-gray-100 to-gray-50 rounded-xl">
+                      <p className="text-xs text-gray-500 mb-2">{t('admin.settings.branding.headerPreview')} :</p>
+                      <div className="flex items-center gap-3">
+                        <div 
+                          className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden"
+                          style={{ 
+                            backgroundColor: settings.branding?.logoUrl && settings.branding?.logoBackground !== false
+                              ? (settings.branding?.primaryColor || "#3b82f6")
+                              : settings.branding?.logoUrl 
+                                ? "transparent"
+                                : (settings.branding?.primaryColor || "#3b82f6")
+                          }}
+                        >
+                      {settings.branding?.logoUrl ? (
+                        <img 
+                          src={settings.branding.logoUrl} 
+                          alt="Logo" 
+                              className="w-7 h-7 object-contain"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        />
+                      ) : (
+                            <span className="text-lg">{settings.branding?.logoIcon || "🏆"}</span>
+                      )}
+                        </div>
+                      <span className="font-bold text-gray-900">{settings.branding?.siteName || "SportSlot"}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Couleur principale */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 mb-2 block flex items-center gap-2">
+                      <Palette className="w-4 h-4" /> {t('admin.settings.branding.primaryColor')}
+                    </Label>
+                    <div className="flex gap-2 flex-wrap">
+                      {[
+                        { name: t('admin.settings.branding.colors.blue'), value: "#3b82f6" },
+                        { name: t('admin.settings.branding.colors.violet'), value: "#8b5cf6" },
+                        { name: t('admin.settings.branding.colors.pink'), value: "#ec4899" },
+                        { name: t('admin.settings.branding.colors.red'), value: "#ef4444" },
+                        { name: t('admin.settings.branding.colors.orange'), value: "#f97316" },
+                        { name: t('admin.settings.branding.colors.green'), value: "#22c55e" },
+                        { name: t('admin.settings.branding.colors.emerald'), value: "#10b981" },
+                        { name: t('admin.settings.branding.colors.cyan'), value: "#06b6d4" },
+                        { name: t('admin.settings.branding.colors.indigo'), value: "#6366f1" },
+                        { name: t('admin.settings.branding.colors.gray'), value: "#6b7280" },
+                      ].map((color) => (
+                        <button
+                          key={color.value}
+                          onClick={() => {
+                            const newSettings = { 
+                              ...settings, 
+                              branding: { ...settings.branding, primaryColor: color.value } 
+                            }
+                            setSettingsState(newSettings)
+                            saveSettings(newSettings)
+                          }}
+                          className={`w-10 h-10 rounded-lg border-2 transition-all ${
+                            settings.branding?.primaryColor === color.value
+                              ? "border-gray-900 scale-110 shadow-lg"
+                              : "border-transparent hover:scale-105"
+                          }`}
+                          style={{ backgroundColor: color.value }}
+                          title={color.name}
+                        />
+                      ))}
+                      <div className="flex items-center gap-2 ml-2">
+                        <input
+                          type="color"
+                          value={settings.branding?.primaryColor || "#3b82f6"}
+                          onChange={(e) => {
+                            const newSettings = { 
+                              ...settings, 
+                              branding: { ...settings.branding, primaryColor: e.target.value } 
+                            }
+                            setSettingsState(newSettings)
+                            saveSettings(newSettings)
+                          }}
+                          className="w-10 h-10 rounded-lg cursor-pointer border-2 border-gray-200"
+                        />
+                        <span className="text-xs text-gray-500">{t('admin.settings.branding.custom')}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Devise */}
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium text-gray-700 mb-2 block">💰 {t('admin.settings.branding.currency')}</Label>
+                      <select
+                        value={settings.branding?.currency || "CHF"}
+                        onChange={(e) => {
+                          const currencies: Record<string, string> = {
+                            "CHF": ".-",
+                            "EUR": "€",
+                            "USD": "$",
+                            "GBP": "£",
+                          }
+                          const newSettings = { 
+                            ...settings, 
+                            branding: { 
+                              ...settings.branding, 
+                              currency: e.target.value,
+                              currencySymbol: currencies[e.target.value] || ".-"
+                            } 
+                          }
+                          setSettingsState(newSettings)
+                          saveSettings(newSettings)
+                        }}
+                        className="w-full h-11 px-3 rounded-lg border-2 border-gray-200 focus:border-purple-400 focus:outline-none bg-white"
+                      >
+                        <option value="CHF">🇨🇭 CHF - Franc suisse</option>
+                        <option value="EUR">🇪🇺 EUR - Euro</option>
+                        <option value="USD">🇺🇸 USD - Dollar américain</option>
+                        <option value="GBP">🇬🇧 GBP - Livre sterling</option>
+                      </select>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium text-gray-700 mb-2 block">📍 {t('admin.settings.branding.currencySymbol')}</Label>
+                      <Input
+                        value={settings.branding?.currencySymbol || ".-"}
+                        onChange={(e) => {
+                          const newSettings = { 
+                            ...settings, 
+                            branding: { ...settings.branding, currencySymbol: e.target.value } 
+                          }
+                          setSettingsState(newSettings)
+                          saveSettings(newSettings)
+                        }}
+                        placeholder=".-"
+                        className="h-11"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Ex: ".-" → 50.- / "€" → 50€</p>
+                    </div>
+                  </div>
+
+                  {/* Langue par défaut */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 mb-2 block">🌐 {t('admin.settings.language.title')}</Label>
+                    <Select
+                      value={settings.branding?.defaultLanguage || "fr"}
+                      onValueChange={(value) => {
+                        const newSettings = { 
+                          ...settings, 
+                          branding: { 
+                            ...settings.branding, 
+                            defaultLanguage: value
+                          } 
+                        }
+                        setSettingsState(newSettings)
+                        saveSettings(newSettings)
+                      }}
+                    >
+                      <SelectTrigger className="h-11">
+                        <SelectValue>
+                          <span className="flex items-center gap-2">
+                            {settings.branding?.defaultLanguage === 'fr' && (
+                              <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                <path fill="#002654" d="M0 0h213.3v480H0z"/>
+                                <path fill="#fff" d="M213.3 0h213.4v480H213.3z"/>
+                                <path fill="#ce1126" d="M426.7 0H640v480H426.7z"/>
+                              </svg>
+                            )}
+                            {settings.branding?.defaultLanguage === 'en' && (
+                              <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                <path fill="#012169" d="M0 0h640v480H0z"/>
+                                <path fill="#FFF" d="m75 0 244 181L562 0h78v62L400 241l240 178v61h-80L320 301 81 480H0v-60l239-178L0 64V0h75z"/>
+                                <path fill="#C8102E" d="m424 281 216 159v40L369 281h55zm-184 20 6 35L54 480H0l240-179zM640 0v3L391 191l2-44L590 0h50zM0 0l239 176h-60L0 42V0z"/>
+                                <path fill="#FFF" d="M241 0v480h160V0H241zM0 160v160h640V160H0z"/>
+                                <path fill="#C8102E" d="M0 193v96h640v-96H0zM273 0v480h96V0h-96z"/>
+                              </svg>
+                            )}
+                            {(settings.branding?.defaultLanguage === 'de' || !settings.branding?.defaultLanguage) && settings.branding?.defaultLanguage !== 'fr' && settings.branding?.defaultLanguage !== 'en' && (
+                              <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                <path fill="#000" d="M0 0h640v160H0z"/>
+                                <path fill="#D00" d="M0 160h640v160H0z"/>
+                                <path fill="#FFCE00" d="M0 320h640v160H0z"/>
+                              </svg>
+                            )}
+                            {!settings.branding?.defaultLanguage && (
+                              <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                <path fill="#002654" d="M0 0h213.3v480H0z"/>
+                                <path fill="#fff" d="M213.3 0h213.4v480H213.3z"/>
+                                <path fill="#ce1126" d="M426.7 0H640v480H426.7z"/>
+                              </svg>
+                            )}
+                            {SUPPORTED_LANGUAGES.find(l => l.code === (settings.branding?.defaultLanguage || 'fr'))?.name}
+                          </span>
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SUPPORTED_LANGUAGES.map((lang) => (
+                          <SelectItem key={lang.code} value={lang.code}>
+                            <span className="flex items-center gap-2">
+                              {lang.code === 'fr' && (
+                                <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                  <path fill="#002654" d="M0 0h213.3v480H0z"/>
+                                  <path fill="#fff" d="M213.3 0h213.4v480H213.3z"/>
+                                  <path fill="#ce1126" d="M426.7 0H640v480H426.7z"/>
+                                </svg>
+                              )}
+                              {lang.code === 'en' && (
+                                <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                  <path fill="#012169" d="M0 0h640v480H0z"/>
+                                  <path fill="#FFF" d="m75 0 244 181L562 0h78v62L400 241l240 178v61h-80L320 301 81 480H0v-60l239-178L0 64V0h75z"/>
+                                  <path fill="#C8102E" d="m424 281 216 159v40L369 281h55zm-184 20 6 35L54 480H0l240-179zM640 0v3L391 191l2-44L590 0h50zM0 0l239 176h-60L0 42V0z"/>
+                                  <path fill="#FFF" d="M241 0v480h160V0H241zM0 160v160h640V160H0z"/>
+                                  <path fill="#C8102E" d="M0 193v96h640v-96H0zM273 0v480h96V0h-96z"/>
+                                </svg>
+                              )}
+                              {lang.code === 'de' && (
+                                <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                  <path fill="#000" d="M0 0h640v160H0z"/>
+                                  <path fill="#D00" d="M0 160h640v160H0z"/>
+                                  <path fill="#FFCE00" d="M0 320h640v160H0z"/>
+                                </svg>
+                              )}
+                              {lang.name}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {t('admin.settings.language.description')}
+                    </p>
+                  </div>
+
+                  {/* Contact */}
+                  <div className="pt-4 border-t border-gray-200">
+                    <h4 className="font-medium text-gray-900 mb-4 flex items-center gap-2">
+                      <Mail className="w-4 h-4" /> {t('admin.settings.sections.business')}
+                    </h4>
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-sm font-medium text-gray-700 mb-2 block">📧 {t('admin.settings.business.email')}</Label>
+                        <Input
+                          type="email"
+                          value={settings.branding?.contactEmail || ""}
+                          onChange={(e) => {
+                            const newSettings = { 
+                              ...settings, 
+                              branding: { ...settings.branding, contactEmail: e.target.value } 
+                            }
+                            setSettingsState(newSettings)
+                            saveSettings(newSettings)
+                          }}
+                          placeholder="contact@exemple.com"
+                          className="h-11"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm font-medium text-gray-700 mb-2 block">📞 {t('admin.settings.business.phone')}</Label>
+                        <Input
+                          type="tel"
+                          value={settings.branding?.contactPhone || ""}
+                          onChange={(e) => {
+                            const newSettings = { 
+                              ...settings, 
+                              branding: { ...settings.branding, contactPhone: e.target.value } 
+                            }
+                            setSettingsState(newSettings)
+                            saveSettings(newSettings)
+                          }}
+                          placeholder="+41 12 345 67 89"
+                          className="h-11"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-4">
+                      <Label className="text-sm font-medium text-gray-700 mb-2 block">📍 {t('admin.settings.business.address')}</Label>
+                      <Input
+                        value={settings.branding?.address || ""}
+                        onChange={(e) => {
+                          const newSettings = { 
+                            ...settings, 
+                            branding: { ...settings.branding, address: e.target.value } 
+                          }
+                          setSettingsState(newSettings)
+                          saveSettings(newSettings)
+                        }}
+                        placeholder="123 Rue du Sport, 1000 Ville"
+                        className="h-11"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </Card>
+
+            </TabsContent>
+
+            <TabsContent value="sports" className="space-y-6">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900">{t('admin.sports.title')}</h2>
+                  <p className="text-gray-500 mt-1">{sports.filter(s => s.enabled).length} {t('admin.tabs.sports')} / {sports.length}</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setEditingSport(null)
+                    setSportForm({ name: "", icon: "⚽", imageUrl: "" })
+                    setIsSportDialogOpen(true)
+                  }}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl font-medium hover:from-blue-700 hover:to-blue-800 transition-all shadow-lg shadow-blue-500/25"
+                >
+                  <Plus className="w-5 h-5" />
+                  {t('admin.sports.add')}
+                </button>
+              </div>
+
+              {/* Grille des sports */}
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {sports.map((sport) => (
+                  <div 
+                    key={sport.id} 
+                    className={`group relative p-5 rounded-2xl border-2 transition-all ${
+                      sport.enabled 
+                        ? "bg-white border-gray-100 shadow-lg hover:shadow-xl hover:border-blue-200" 
+                        : "bg-gray-50 border-gray-100 opacity-60 hover:opacity-100"
+                    }`}
+                  >
+                    {/* Toggle en haut à droite */}
+                    <button
+                      onClick={() => toggleSport(sport.id)}
+                      className={`absolute top-4 right-4 w-12 h-7 rounded-full transition-all ${
+                        sport.enabled ? "bg-blue-600" : "bg-gray-300"
+                      }`}
+                    >
+                      <div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-md transition-all ${
+                        sport.enabled ? "left-6" : "left-1"
+                      }`} />
+                    </button>
+
+                    {/* Contenu principal */}
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-4xl ${
+                        sport.enabled 
+                          ? "bg-gradient-to-br from-blue-100 to-indigo-100" 
+                          : "bg-gray-100"
+                      }`}>
+                        {sport.imageUrl ? (
+                          <img
+                            src={sport.imageUrl || "/placeholder.svg"}
+                            alt={sport.name}
+                            className="w-10 h-10 rounded-lg object-cover"
+                          />
+                        ) : (
+                          sport.icon
+                        )}
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-xl text-gray-900">{sport.name}</h3>
+                        <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full mt-1 ${
+                          sport.enabled 
+                            ? "bg-green-100 text-green-700" 
+                            : "bg-gray-200 text-gray-500"
+                        }`}>
+                          {sport.enabled ? `✓ ${t('admin.sports.enabled')}` : `✗ ${t('admin.sports.disabled')}`}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex gap-2 pt-3 border-t border-gray-100">
+                      <button
+                        onClick={() => handleEditSport(sport)}
+                        className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium text-gray-600 bg-gray-100 hover:bg-blue-100 hover:text-blue-700 transition-all"
+                      >
+                        <Edit className="w-4 h-4" />
+                        {t('common.edit')}
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteSport(sport.id)}
+                        className="px-4 py-2.5 rounded-xl text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 transition-all"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Carte d'ajout */}
+                <button
+                  onClick={() => {
+                    setEditingSport(null)
+                    setSportForm({ name: "", icon: "⚽", imageUrl: "" })
+                    setIsSportDialogOpen(true)
+                  }}
+                  className="p-5 rounded-2xl border-2 border-dashed border-gray-200 hover:border-blue-400 hover:bg-blue-50/50 transition-all flex flex-col items-center justify-center min-h-[180px] group"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-gray-100 group-hover:bg-blue-100 flex items-center justify-center mb-3 transition-colors">
+                    <Plus className="w-7 h-7 text-gray-400 group-hover:text-blue-600" />
+                  </div>
+                  <span className="font-medium text-gray-500 group-hover:text-blue-600">{t('admin.sports.add')}</span>
+                </button>
+              </div>
+            </TabsContent>
+
+          </Tabs>
+        </Card>
+
+        {/* Dialog de création/modification de sport - EN DEHORS des Tabs pour un positionnement correct */}
+              {isSportDialogOpen && (
+                <div 
+                  className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+                  onClick={() => setIsSportDialogOpen(false)}
+                >
+                  <div 
+                    className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-200"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <h2 className="text-xl font-bold text-gray-900 mb-6">
+                {editingSport ? t('admin.sports.edit') : t('admin.sports.add')}
+                    </h2>
+                    
+                    <form onSubmit={handleSportSubmit} className="space-y-5">
+                      {/* Prévisualisation */}
+                      <div className="flex items-center justify-center p-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl">
+                        <div className="w-20 h-20 rounded-2xl bg-white shadow-lg flex items-center justify-center text-5xl">
+                          {sportForm.imageUrl ? (
+                            <img
+                              src={sportForm.imageUrl}
+                              alt="Preview"
+                              className="w-14 h-14 rounded-xl object-cover"
+                            />
+                          ) : (
+                            sportForm.icon || "⚽"
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Nom */}
+                      <div>
+                  <Label className="text-sm font-medium text-gray-700 mb-2 block">{t('admin.sports.name')}</Label>
+                        <Input
+                          value={sportForm.name}
+                          onChange={(e) => setSportForm({ ...sportForm, name: e.target.value })}
+                    placeholder={t('admin.sports.namePlaceholder')}
+                          className="h-11"
+                          required
+                        />
+                      </div>
+
+                      {/* Icône emoji */}
+                      <div>
+                  <Label className="text-sm font-medium text-gray-700 mb-2 block">{t('admin.sports.icon')} (emoji)</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            value={sportForm.icon}
+                            onChange={(e) => setSportForm({ ...sportForm, icon: e.target.value })}
+                            placeholder="🏸"
+                            className="h-11 w-20 text-center text-2xl"
+                            maxLength={2}
+                          />
+                          <div className="flex gap-1 flex-1 flex-wrap">
+                            {["⚽", "🏀", "🎾", "🏸", "🏐", "⛳", "🏓", "🥊"].map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                onClick={() => setSportForm({ ...sportForm, icon: emoji })}
+                                className={`w-10 h-10 rounded-lg text-xl transition-all ${
+                                  sportForm.icon === emoji
+                                    ? "bg-blue-100 border-2 border-blue-400"
+                                    : "bg-gray-100 hover:bg-gray-200"
+                                }`}
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* URL image */}
+                      <div>
+                  <Label className="text-sm font-medium text-gray-700 mb-2 block">{t('admin.sports.imageUrl')}</Label>
+                        <Input
+                          type="url"
+                          value={sportForm.imageUrl}
+                          onChange={(e) => setSportForm({ ...sportForm, imageUrl: e.target.value })}
+                          placeholder="https://exemple.com/image.png"
+                          className="h-11"
+                        />
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex gap-3 pt-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setIsSportDialogOpen(false)}
+                          className="flex-1"
+                        >
+                    {t('common.cancel')}
+                        </Button>
+                        <Button type="submit" className="flex-1">
+                    {editingSport ? t('common.save') : t('common.confirm')}
+                        </Button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+        {/* Dialog de modification complète du créneau */}
+        {(editingSlot || isSlotDialogOpen) && (
+          <div 
+            className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => {
+              setEditingSlot(null)
+              setIsSlotDialogOpen(false)
+            }}
+          >
+            <div 
+              className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 animate-in fade-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="text-xl font-bold text-gray-900 mb-6">{t('admin.slots.edit')}</h2>
+              
+              <div className="space-y-5">
+                {/* Sports */}
+                <div>
+                  <Label className="text-sm font-medium text-gray-700 mb-2 block">{t('admin.tabs.sports')}</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {sports.filter(s => s.enabled).map((sport) => (
+                      <button
+                        key={sport.id}
+                        onClick={() => {
+                          const newSportIds = slotForm.sportIds.includes(sport.id)
+                            ? slotForm.sportIds.filter(id => id !== sport.id)
+                            : [...slotForm.sportIds, sport.id]
+                          if (newSportIds.length > 0) {
+                            setSlotForm({ ...slotForm, sportIds: newSportIds })
+                          }
+                        }}
+                        className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-all ${
+                          slotForm.sportIds.includes(sport.id)
+                            ? "bg-blue-100 text-blue-800 border-2 border-blue-400"
+                            : "bg-gray-50 text-gray-700 border-2 border-gray-200 hover:bg-gray-100"
+                        }`}
+                      >
+                        <span className="text-lg">{sport.icon}</span>
+                        <span className="font-medium">{sport.name}</span>
+                        {slotForm.sportIds.includes(sport.id) && (
+                          <span className="ml-auto text-blue-600">✓</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Prix et Capacité */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 mb-2 block">💰 {t('admin.slots.price')} ({settings.branding?.currency || "CHF"})</Label>
+                    <Input
+                      type="number"
+                      value={slotForm.price}
+                      onChange={(e) => setSlotForm({ ...slotForm, price: Number.parseFloat(e.target.value) })}
+                      className="h-10"
+                    />
+                    <div className="flex gap-1 mt-2">
+                      {[30, 50, 80, 100].map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => setSlotForm({ ...slotForm, price: p })}
+                          className={`flex-1 text-xs py-1.5 rounded-lg border-2 font-medium transition-all ${
+                            slotForm.price === p
+                              ? "bg-blue-600 text-white border-blue-600"
+                              : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-blue-50"
+                          }`}
+                        >
+                          {p}.-
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 mb-2 block">👥 {t('admin.slots.maxCapacity')}</Label>
+                    <Input
+                      type="number"
+                      value={slotForm.maxCapacity}
+                      onChange={(e) => setSlotForm({ ...slotForm, maxCapacity: Number.parseInt(e.target.value) })}
+                      className="h-10"
+                    />
+                    <div className="flex gap-1 mt-2">
+                      {[2, 4, 6, 8].map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => setSlotForm({ ...slotForm, maxCapacity: c })}
+                          className={`flex-1 text-xs py-1.5 rounded-lg border-2 font-medium transition-all ${
+                            slotForm.maxCapacity === c
+                              ? "bg-blue-600 text-white border-blue-600"
+                              : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-blue-50"
+                          }`}
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Durée */}
+                <div>
+                  <Label className="text-sm font-medium text-gray-700 mb-2 block">⏱️ {t('admin.slots.duration')}</Label>
+                  <select
+                    value={slotForm.duration}
+                    onChange={(e) => setSlotForm({ ...slotForm, duration: Number(e.target.value) })}
+                    className="w-full h-11 px-3 font-medium rounded-lg border-2 border-gray-200 focus:border-blue-400 focus:outline-none bg-white mb-2"
+                  >
+                    {Array.from({ length: 24 }, (_, i) => i + 1).map((h) => (
+                      <option key={h} value={h * 60}>{h}h</option>
+                    ))}
+                  </select>
+                  <div className="flex gap-2">
+                    {[1, 2, 3, 4, 6, 8].map((h) => (
+                      <button
+                        key={h}
+                        onClick={() => setSlotForm({ ...slotForm, duration: h * 60 })}
+                        className={`flex-1 py-2 text-sm rounded-lg border-2 font-medium transition-all ${
+                          slotForm.duration === h * 60
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-blue-50"
+                        }`}
+                      >
+                        {h}h
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-3 pt-2">
+                  {editingSlot && (
+                    <Button
+                      onClick={() => {
+                        handleDeleteSlot(editingSlot.id)
+                        setEditingSlot(null)
+                        setIsSlotDialogOpen(false)
+                      }}
+                      className="px-4 bg-red-600 hover:bg-red-700 text-white"
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      {t('common.delete')}
+                    </Button>
+                  )}
+                  <div className="flex flex-1 gap-2 justify-end">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setEditingSlot(null)
+                        setIsSlotDialogOpen(false)
+                      }}
+                    >
+                      {t('common.cancel')}
+                    </Button>
+                    <Button onClick={handleSaveSlot}>
+                      {t('common.save')}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Footer avec informations de contact */}
+      {(settings.branding?.contactEmail || settings.branding?.contactPhone || settings.branding?.address) && (
+        <footer className="bg-white border-t mt-8">
+          <div className="container mx-auto px-4 py-6">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              {/* Logo et nom */}
+              <div className="flex items-center gap-3">
+                <div 
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-white overflow-hidden"
+                  style={{ 
+                    backgroundColor: settings.branding?.logoUrl && settings.branding?.logoBackground === false
+                      ? "transparent"
+                      : (settings.branding?.primaryColor || "#3b82f6")
+                  }}
+                >
+                  {settings.branding?.logoUrl ? (
+                    <img 
+                      src={settings.branding.logoUrl} 
+                      alt="Logo" 
+                      className="w-6 h-6 object-contain"
+                    />
+                  ) : (
+                    <span className="text-sm">{settings.branding?.logoIcon || "🏆"}</span>
+                  )}
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-900">{settings.branding?.siteName || "SportSlot"}</span>
+                  {settings.branding?.siteDescription && (
+                    <p className="text-xs text-gray-500">{settings.branding.siteDescription}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Informations de contact */}
+              <div className="flex flex-wrap items-center justify-center gap-4 text-sm text-gray-600">
+                {settings.branding?.contactPhone && (
+                  <a 
+                    href={`tel:${settings.branding.contactPhone}`}
+                    className="flex items-center gap-1.5 hover:text-gray-900 transition-colors"
+                  >
+                    <Phone className="w-4 h-4" />
+                    <span>{settings.branding.contactPhone}</span>
+                  </a>
+                )}
+                {settings.branding?.contactEmail && (
+                  <a 
+                    href={`mailto:${settings.branding.contactEmail}`}
+                    className="flex items-center gap-1.5 hover:text-gray-900 transition-colors"
+                  >
+                    <Mail className="w-4 h-4" />
+                    <span>{settings.branding.contactEmail}</span>
+                  </a>
+                )}
+                {settings.branding?.address && (
+                  <span className="flex items-center gap-1.5">
+                    <MapPin className="w-4 h-4" />
+                    <span>{settings.branding.address}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </footer>
+      )}
+
+      {/* Modal Cropper - Placé à la racine pour un z-index correct */}
+      {isLogoCropperOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden">
+            <div className="p-4 border-b flex items-center justify-between">
+              <h3 className="font-semibold text-gray-900">{t('common.crop')}</h3>
+              <button 
+                onClick={() => {
+                  setIsLogoCropperOpen(false)
+                  setCropImageSrc("")
+                  setCropZoom(1)
+                  setCropPosition({ x: 0, y: 0 })
+                  setImageNaturalSize({ width: 0, height: 0 })
+                }}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+    </div>
+            
+            <div className="p-4">
+              {/* Zone de preview avec drag */}
+              <div 
+                ref={cropperRef}
+                className="relative w-full aspect-square bg-gray-100 rounded-xl overflow-hidden mb-4 cursor-move select-none"
+                style={{
+                  backgroundImage: "linear-gradient(45deg, #d1d5db 25%, transparent 25%), linear-gradient(-45deg, #d1d5db 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #d1d5db 75%), linear-gradient(-45deg, transparent 75%, #d1d5db 75%)",
+                  backgroundSize: "20px 20px",
+                  backgroundPosition: "0 0, 0 10px, 10px -10px, -10px 0px"
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  setIsDragging(true)
+                  setDragStart({ x: e.clientX - cropPosition.x, y: e.clientY - cropPosition.y })
+                }}
+                onMouseMove={(e) => {
+                  if (!isDragging) return
+                  setCropPosition({
+                    x: e.clientX - dragStart.x,
+                    y: e.clientY - dragStart.y
+                  })
+                }}
+                onMouseUp={() => setIsDragging(false)}
+                onMouseLeave={() => setIsDragging(false)}
+                onTouchStart={(e) => {
+                  const touch = e.touches[0]
+                  setIsDragging(true)
+                  setDragStart({ x: touch.clientX - cropPosition.x, y: touch.clientY - cropPosition.y })
+                }}
+                onTouchMove={(e) => {
+                  if (!isDragging) return
+                  const touch = e.touches[0]
+                  setCropPosition({
+                    x: touch.clientX - dragStart.x,
+                    y: touch.clientY - dragStart.y
+                  })
+                }}
+                onTouchEnd={() => setIsDragging(false)}
+              >
+                <img 
+                  ref={cropImageRef}
+                  src={cropImageSrc}
+                  alt="Crop preview"
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: '50%',
+                    top: '50%',
+                    transform: `translate(calc(-50% + ${cropPosition.x}px), calc(-50% + ${cropPosition.y}px)) scale(${cropZoom})`,
+                    width: 'auto',
+                    height: 'auto',
+                    maxWidth: '100%',
+                    maxHeight: '100%'
+                  }}
+                  onLoad={(e) => {
+                    const img = e.target as HTMLImageElement
+                    setImageNaturalSize({ width: img.naturalWidth, height: img.naturalHeight })
+                  }}
+                  draggable={false}
+                />
+                {/* Cadre de découpe carré au centre */}
+                <div className="absolute inset-0 pointer-events-none">
+                  {/* Zone sombre autour */}
+                  <div className="absolute inset-0 bg-black/40" style={{
+                    clipPath: 'polygon(0 0, 100% 0, 100% 100%, 0 100%, 0 0, 25% 25%, 25% 75%, 75% 75%, 75% 25%, 25% 25%)'
+                  }} />
+                  {/* Bordure du cadre */}
+                  <div className="absolute left-1/4 top-1/4 w-1/2 h-1/2 border-2 border-white rounded-lg shadow-lg" />
+                  {/* Grille optionnelle */}
+                  <div className="absolute left-1/4 top-1/4 w-1/2 h-1/2 grid grid-cols-3 grid-rows-3">
+                    {[...Array(9)].map((_, i) => (
+                      <div key={i} className="border border-white/30" />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Instructions */}
+              <p className="text-xs text-gray-500 text-center mb-3">
+                🖱️ {t('admin.settings.branding.dragToPosition')} • {t('admin.settings.branding.scrollToZoom')}
+              </p>
+
+              {/* Contrôles zoom */}
+              <div className="flex items-center gap-3 mb-4">
+                <button 
+                  onClick={() => setCropZoom(z => Math.max(0.5, z - 0.1))}
+                  className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  <ZoomOut className="w-4 h-4 text-gray-600" />
+                </button>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="3"
+                  step="0.05"
+                  value={cropZoom}
+                  onChange={(e) => setCropZoom(parseFloat(e.target.value))}
+                  className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                />
+                <button 
+                  onClick={() => setCropZoom(z => Math.min(3, z + 0.1))}
+                  className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  <ZoomIn className="w-4 h-4 text-gray-600" />
+                </button>
+                <span className="text-xs text-gray-500 w-12 text-right">{Math.round(cropZoom * 100)}%</span>
+              </div>
+
+              {/* Boutons de préréglage */}
+              <div className="flex flex-wrap justify-center gap-2 mb-2">
+                <button 
+                  onClick={() => { setCropPosition({ x: 0, y: 0 }); setCropZoom(1) }}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-1.5"
+                  title={t('common.resetZoom')}
+                >
+                  <Move className="w-3.5 h-3.5" />
+                  Reset
+                </button>
+                <button 
+                  onClick={() => setCropPosition({ x: 0, y: 0 })}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  title={t('common.center')}
+                >
+                  Centrer
+                </button>
+                <div className="h-6 w-px bg-gray-300 mx-1" />
+                <button 
+                  onClick={() => setCropZoom(0.5)}
+                  className={`px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                    cropZoom === 0.5 ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200'
+                  }`}
+                  title="Zoom 50%"
+                >
+                  50%
+                </button>
+                <button 
+                  onClick={() => setCropZoom(1)}
+                  className={`px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                    cropZoom === 1 ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200'
+                  }`}
+                  title="Zoom 100%"
+                >
+                  100%
+                </button>
+                <button 
+                  onClick={() => setCropZoom(1.5)}
+                  className={`px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                    cropZoom === 1.5 ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200'
+                  }`}
+                  title="Zoom 150%"
+                >
+                  150%
+                </button>
+                <button 
+                  onClick={() => setCropZoom(2)}
+                  className={`px-2.5 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                    cropZoom === 2 ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200'
+                  }`}
+                  title="Zoom 200%"
+                >
+                  200%
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 border-t bg-gray-50 flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsLogoCropperOpen(false)
+                  setCropImageSrc("")
+                  setCropZoom(1)
+                  setCropPosition({ x: 0, y: 0 })
+                  setImageNaturalSize({ width: 0, height: 0 })
+                }}
+                className="flex-1"
+              >
+                {t('common.cancel')}
+              </Button>
+              <Button
+                onClick={() => {
+                  // Créer un canvas pour recadrer l'image
+                  const canvas = document.createElement('canvas')
+                  const ctx = canvas.getContext('2d')
+                  if (!ctx || !cropperRef.current) return
+
+                  const containerSize = cropperRef.current.offsetWidth
+                  const cropSize = containerSize * 0.5 // Le carré fait 50% du container
+                  const outputSize = 256 // Taille de sortie en pixels
+
+                  canvas.width = outputSize
+                  canvas.height = outputSize
+
+                  const img = new Image()
+                  img.crossOrigin = "anonymous"
+                  img.onload = () => {
+                    // Calculer les dimensions de l'image affichée
+                    const scale = Math.min(containerSize / img.naturalWidth, containerSize / img.naturalHeight)
+
+                    // Calculer quelle partie de l'image source correspond au crop
+                    const sourceScale = 1 / (scale * cropZoom)
+                    const sourceCropSize = cropSize * sourceScale
+
+                    // Centre de l'image source
+                    const sourceCenterX = img.naturalWidth / 2
+                    const sourceCenterY = img.naturalHeight / 2
+
+                    // Décalage dû au drag (en coordonnées source)
+                    const offsetX = -cropPosition.x * sourceScale
+                    const offsetY = -cropPosition.y * sourceScale
+
+                    // Position de découpe dans l'image source
+                    const sourceX = sourceCenterX - sourceCropSize / 2 + offsetX
+                    const sourceY = sourceCenterY - sourceCropSize / 2 + offsetY
+
+                    // Dessiner l'image recadrée
+                    ctx.drawImage(
+                      img,
+                      sourceX, sourceY, sourceCropSize, sourceCropSize,
+                      0, 0, outputSize, outputSize
+                    )
+
+                    // Convertir en base64
+                    const croppedImageUrl = canvas.toDataURL('image/png', 0.9)
+                    
+                    // Sauvegarder l'original seulement si c'est une nouvelle image
+                    // (si on recadre une image existante, garder l'original précédent)
+                    const originalUrl = settings.branding?.logoOriginalUrl || cropImageSrc
+                    
+                    const newSettings = { 
+                      ...settings, 
+                      branding: { 
+                        ...settings.branding, 
+                        logoUrl: croppedImageUrl, 
+                        logoOriginalUrl: originalUrl,
+                        logoBackground: true 
+                      } 
+                    }
+                    setSettingsState(newSettings)
+                    saveSettings(newSettings)
+                    setIsLogoCropperOpen(false)
+                    setCropImageSrc("")
+                    setCropZoom(1)
+                    setCropPosition({ x: 0, y: 0 })
+                    setImageNaturalSize({ width: 0, height: 0 })
+                  }
+                  img.src = cropImageSrc
+                }}
+                className="flex-1 bg-blue-600 hover:bg-blue-700"
+              >
+                {t('common.apply')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de détails des réservations (mode vue) */}
+      {bookingDetailsModal.isOpen && bookingDetailsModal.slot && (
+        <div 
+          className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setBookingDetailsModal({ isOpen: false, slot: null, bookings: [] })}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200 relative"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div 
+              className="p-6 text-white relative"
+              style={{ backgroundColor: settings.branding?.primaryColor || "#3b82f6" }}
+            >
+              <button 
+                onClick={() => setBookingDetailsModal({ isOpen: false, slot: null, bookings: [] })}
+                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-3xl">
+                  {getSportIcons(bookingDetailsModal.slot.sportIds || [bookingDetailsModal.slot.sportId!]).map((s, i) => (
+                    <span key={i}>{s.icon}</span>
+                  ))}
+                </span>
+                <div>
+                  <h2 className="text-xl font-bold">{t('admin.agenda.bookingDetails')}</h2>
+                  <p className="text-white/80 text-sm">
+                    {new Date(bookingDetailsModal.slot.date).toLocaleDateString(i18n.language, { weekday: 'long', day: 'numeric', month: 'long' })}
+                    {' • '}{bookingDetailsModal.slot.time}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex gap-4 text-sm">
+                <div className="bg-white/20 rounded-lg px-3 py-1.5">
+                  <span className="font-medium">{bookingDetailsModal.slot.currentBookings}</span>
+                  <span className="text-white/80">/{bookingDetailsModal.slot.maxCapacity} {t('admin.agenda.totalBookings')}</span>
+                </div>
+                <div className="bg-white/20 rounded-lg px-3 py-1.5">
+                  <span className="font-medium">{bookingDetailsModal.slot.maxCapacity - bookingDetailsModal.slot.currentBookings}</span>
+                  <span className="text-white/80"> {t('admin.agenda.availablePlaces')}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Liste des réservations */}
+            <div className="p-6 max-h-[400px] overflow-y-auto">
+              {bookingDetailsModal.bookings.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Users className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p>{t('admin.agenda.noBookings')}</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {bookingDetailsModal.bookings.map((booking) => {
+                    const bookingSport = sports.find(s => s.id === booking.sportId)
+                    return (
+                      <div 
+                        key={booking.id}
+                        className="p-4 bg-gray-50 rounded-xl border border-gray-100"
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <div className="font-semibold text-gray-900">{booking.customerName}</div>
+                            <div className="text-sm text-gray-500">{booking.customerEmail}</div>
+                            {booking.customerPhone && (
+                              <div className="text-sm text-gray-500 flex items-center gap-1">
+                                📞 {booking.customerPhone}
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <div 
+                              className="font-bold"
+                              style={{ color: settings.branding?.primaryColor || "#3b82f6" }}
+                            >
+                              {booking.numberOfPeople} {t('admin.agenda.people')}
+                            </div>
+                            <div className="text-sm text-gray-500">{booking.totalPrice}{settings.branding?.currencySymbol || '.-'}</div>
+                          </div>
+                        </div>
+                        {/* Sport réservé */}
+                        <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                          <span>{bookingSport?.icon || "🏃"}</span>
+                          <span className="font-medium">{booking.sportName}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs text-gray-400 flex items-center gap-1">
+                            <Calendar className="w-3 h-3" />
+                            {t('admin.agenda.bookedOn')} {new Date(booking.createdAt).toLocaleDateString(i18n.language, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50 h-8 px-2"
+                            onClick={() => handleDeleteBooking(booking)}
+                          >
+                            <Trash2 className="w-4 h-4 mr-1" />
+                            {t('admin.agenda.cancelBooking')}
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t bg-gray-50 flex justify-end">
+              <Button 
+                onClick={() => setBookingDetailsModal({ isOpen: false, slot: null, bookings: [] })}
+                variant="outline"
+              >
+                {t('common.close')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notifications de nouvelles réservations */}
+      <div className="fixed top-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none">
+        {notifications.map((notif, index) => (
+          <div
+            key={notif.id}
+            className="pointer-events-auto bg-white rounded-xl shadow-2xl border border-green-200 p-4 min-w-[320px] max-w-[400px] animate-in slide-in-from-right duration-300"
+            style={{ 
+              animationDelay: `${index * 100}ms`,
+              opacity: 1 - (index * 0.15)
+            }}
+          >
+            <div className="flex items-start gap-3">
+              <div 
+                className="w-10 h-10 rounded-full flex items-center justify-center text-white text-lg"
+                style={{ backgroundColor: settings.branding?.primaryColor || '#3b82f6' }}
+              >
+                🎉
+              </div>
+              <div className="flex-1">
+                <div className="font-bold text-gray-900">{notif.message}</div>
+                <div className="text-sm text-gray-600 mt-0.5">{notif.details}</div>
+                <div className="text-xs text-gray-400 mt-1">
+                  {notif.timestamp.toLocaleTimeString()}
+                </div>
+              </div>
+              <button
+                onClick={() => setNotifications(prev => prev.filter(n => n.id !== notif.id))}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,495 @@
+{
+  "common": {
+    "loading": "Laden...",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "close": "Schließen",
+    "confirm": "Bestätigen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "previous": "Zurück",
+    "search": "Suchen",
+    "filter": "Filtern",
+    "all": "Alle",
+    "none": "Keine",
+    "yes": "Ja",
+    "no": "Nein",
+    "or": "oder",
+    "and": "und",
+    "crop": "Zuschneiden",
+    "apply": "Anwenden",
+    "upload": "Hochladen",
+    "import": "Importieren",
+    "icon": "Symbol",
+    "resetZoom": "Position und Zoom zurücksetzen",
+    "center": "Bild zentrieren"
+  },
+  "languages": {
+    "fr": "Français",
+    "en": "English",
+    "de": "Deutsch",
+    "it": "Italiano",
+    "es": "Español"
+  },
+  "nav": {
+    "home": "Startseite",
+    "booking": "Buchung",
+    "admin": "Admin",
+    "settings": "Einstellungen",
+    "logout": "Abmelden",
+    "login": "Anmelden"
+  },
+  "home": {
+    "hero": {
+      "badge": "Online-Buchung verfügbar",
+      "title": "Buchen Sie Ihren Sporttermin",
+      "subtitle": "Wählen Sie Ihre Sportart, einen Zeitraum und buchen Sie mit wenigen Klicks"
+    },
+    "stats": {
+      "availableSlots": "verfügbare Termine",
+      "sports": "Sportarten",
+      "todaySlots": "Heute"
+    },
+    "filters": {
+      "title": "Nach Sportart filtern",
+      "allSports": "Alle Sportarten"
+    },
+    "calendar": {
+      "title": "Verfügbarkeitskalender",
+      "weekOf": "Woche vom",
+      "noSlots": "Keine Termine verfügbar",
+      "noSlotsToday": "Heute keine Termine verfügbar",
+      "selectSport": "Wählen Sie eine Sportart, um verfügbare Termine anzuzeigen"
+    },
+    "slot": {
+      "available": "verfügbar",
+      "availablePlural": "verfügbar",
+      "full": "Ausgebucht",
+      "book": "Buchen",
+      "price": "Preis",
+      "duration": "Dauer",
+      "capacity": "Kapazität",
+      "minutes": "Min",
+      "person": "Person",
+      "people": "Personen",
+      "place": "Platz",
+      "places": "Plätze",
+      "slot": "Termin",
+      "slots": "Termine",
+      "passed": "Vergangen",
+      "tooLate": "Zu spät"
+    },
+    "days": {
+      "monday": "Montag",
+      "tuesday": "Dienstag",
+      "wednesday": "Mittwoch",
+      "thursday": "Donnerstag",
+      "friday": "Freitag",
+      "saturday": "Samstag",
+      "sunday": "Sonntag",
+      "mon": "Mo",
+      "tue": "Di",
+      "wed": "Mi",
+      "thu": "Do",
+      "fri": "Fr",
+      "sat": "Sa",
+      "sun": "So"
+    },
+    "months": {
+      "january": "Januar",
+      "february": "Februar",
+      "march": "März",
+      "april": "April",
+      "may": "Mai",
+      "june": "Juni",
+      "july": "Juli",
+      "august": "August",
+      "september": "September",
+      "october": "Oktober",
+      "november": "November",
+      "december": "Dezember"
+    }
+  },
+  "booking": {
+    "title": "Diesen Termin buchen",
+    "subtitle": "Vervollständigen Sie Ihre Angaben, um die Buchung abzuschließen",
+    "selectSport": "Wählen Sie Ihre Sportart",
+    "selectSportDesc": "Dieser Termin ist für mehrere Sportarten verfügbar",
+    "form": {
+      "name": "Ihr Name",
+      "namePlaceholder": "Max Mustermann",
+      "email": "E-Mail-Adresse",
+      "emailPlaceholder": "max@beispiel.de",
+      "phone": "Telefon",
+      "phonePlaceholder": "+49 170 123 4567",
+      "people": "Anzahl der Personen",
+      "notes": "Anmerkungen (optional)",
+      "notesPlaceholder": "Zusätzliche Informationen..."
+    },
+    "summary": {
+      "title": "Zusammenfassung",
+      "sport": "Sportart",
+      "date": "Datum",
+      "time": "Uhrzeit",
+      "duration": "Dauer",
+      "people": "Personen",
+      "pricePerPerson": "Preis pro Person",
+      "total": "Gesamt"
+    },
+    "submit": "Buchung bestätigen",
+    "submitting": "Buchung läuft...",
+    "success": {
+      "title": "Buchung bestätigt!",
+      "message": "Sie erhalten eine Bestätigungs-E-Mail an die angegebene Adresse.",
+      "backHome": "Zurück zur Startseite"
+    },
+    "error": "Ein Fehler ist aufgetreten",
+    "errorTitle": "Buchung nicht möglich",
+    "errorMessages": {
+      "title": "Fehler",
+      "message": "Bei der Buchung ist ein Fehler aufgetreten. Bitte versuchen Sie es erneut.",
+      "slotFull": "Dieser Termin ist ausgebucht.",
+      "invalidEmail": "Ungültige E-Mail-Adresse.",
+      "requiredFields": "Bitte füllen Sie alle Pflichtfelder aus."
+    }
+  },
+  "footer": {
+    "rights": "Alle Rechte vorbehalten",
+    "contact": "Kontakt",
+    "address": "Adresse",
+    "phone": "Telefon",
+    "email": "E-Mail"
+  },
+  "admin": {
+    "title": "Verwaltung",
+    "dashboard": "Dashboard",
+    "storage": {
+      "browser": "Browser - DEMO",
+      "browserDesc": "Demo-Modus - Daten im Browser gespeichert (nicht persistent)",
+      "local": "Lokale DB",
+      "localDesc": "Lokale SQLite-Datenbank (dev.db Datei)",
+      "external": "Externe DB",
+      "externalDesc": "Externe Datenbank (PostgreSQL, MySQL, usw.)"
+    },
+    "tabs": {
+      "agenda": "Kalender",
+      "sports": "Sportarten",
+      "settings": "Einstellungen"
+    },
+    "agenda": {
+      "title": "Terminverwaltung",
+      "createSlot": "Termin erstellen",
+      "generateSlots": "Termine generieren",
+      "editMode": {
+        "slot": "Termin erstellen",
+        "closure": "Schließung",
+        "eraser": "Radierer"
+      },
+      "views": {
+        "week": "Woche",
+        "month": "Monat"
+      },
+      "filters": {
+        "allSports": "Alle Sportarten",
+        "filterBySport": "Nach Sportart filtern"
+      },
+      "stats": {
+        "title": "Statistiken",
+        "ofWeek": "der Woche",
+        "ofMonth": "des Monats",
+        "places": "Plätze",
+        "earned": "verdient",
+        "hours": "Stunden",
+        "fillRate": "Auslastung"
+      },
+      "tools": "Werkzeuge",
+      "viewMode": "Ansicht",
+      "editModeBtn": "Bearbeiten",
+      "bookingDetails": "Buchungsdetails",
+      "noBookings": "Keine Buchungen für diesen Termin",
+      "totalBookings": "Gesamtbuchungen",
+      "availablePlaces": "Verfügbare Plätze",
+      "bookedBy": "Gebucht von",
+      "people": "Personen",
+      "bookedOn": "Gebucht am",
+      "cancelBooking": "Stornieren",
+      "confirmDeleteBooking": "Buchung von {{name}} ({{people}} Person(en)) stornieren?",
+      "clickToAdd": "Klicken Sie auf den Kalender, um einen Termin hinzuzufügen",
+      "clickToClose": "Klicken Sie auf einen Tag, um ihn als geschlossen zu markieren. Erneut klicken zum Abbrechen.",
+      "dragOrClick": "Klicken oder ziehen Sie ein Bild hierher",
+      "eraserMode": "Radierer-Modus: Linksklick zum Auswählen • Rechtsklick zum Abwählen • halten und ziehen",
+      "closureModeActive": "Schließungsmodus aktiv",
+      "multiplePeriod": "Mehrere Tage",
+      "closedDays": "Geschlossene Tage",
+      "closed": "GESCHLOSSEN",
+      "slotCount": "Termin",
+      "slotsCount": "Termine",
+      "storageLocal": "Lokal",
+      "storageDb": "Datenbank",
+      "closedDayConfirm": "Dieser Tag ist als geschlossen markiert.\n\nMöchten Sie die Schließung entfernen und diesen Termin hinzufügen?",
+      "publish": "Veröffentlichen",
+      "published": "veröffentlicht",
+      "deleted": "gelöscht",
+      "syncedToDb": "Mit Datenbank synchronisiert",
+      "noChangesToPublish": "Keine Termine zu veröffentlichen. Alle Termine sind bereits sichtbar.",
+      "outsideHours": "außerhalb der Öffnungszeiten",
+      "deleteOutsideSlots": "Möchten Sie diese Termine löschen",
+      "pendingDeletion": "Wartet auf Löschung",
+      "cancelDeletion": "Löschung abbrechen",
+      "closuresPublished": "Schließungen veröffentlicht",
+      "unpublishedClosures": "unveröffentlichte Schließungen"
+    },
+    "sports": {
+      "title": "Sportartenverwaltung",
+      "add": "Sportart hinzufügen",
+      "edit": "Sportart bearbeiten",
+      "name": "Sportartname",
+      "namePlaceholder": "Z.B.: Padel",
+      "icon": "Symbol",
+      "enabled": "Aktiv",
+      "disabled": "Inaktiv",
+      "noSports": "Keine Sportarten konfiguriert",
+      "deleteConfirm": "Diese Sportart löschen?",
+      "deleteWarning": "Achtung",
+      "willBeDeleted": "werden gelöscht",
+      "willBeUpdated": "werden aktualisiert (Sportart entfernt)",
+      "imageUrl": "Bild-URL (optional)",
+      "notEnabled": "Die ausgewählte Sportart ist nicht aktiviert."
+    },
+    "slots": {
+      "sport": "Sportart",
+      "sports": "Sportarten",
+      "date": "Datum",
+      "time": "Uhrzeit",
+      "duration": "Dauer",
+      "capacity": "Kapazität",
+      "maxCapacity": "Max. Kapazität",
+      "price": "Preis",
+      "bookings": "Buchungen",
+      "delete": "Termin löschen",
+      "edit": "Termin bearbeiten",
+      "deleteConfirm": "Diesen Termin löschen?",
+      "noSportEnabled": "Bitte aktivieren Sie mindestens eine Sportart, um Termine zu erstellen.",
+      "overlapError": "Nicht möglich: Diese Dauer würde sich mit einem anderen Termin überschneiden.",
+      "noWorkingHours": "Dieser Tag hat keine konfigurierten Arbeitszeiten.",
+      "durationTooLong": "Dauer zu lang!",
+      "remainingTime": "verbleiben noch",
+      "beforeClosing": "vor Schließung",
+      "dayOnlyLasts": "Der Tag dauert nur",
+      "editSports": "Sportarten bearbeiten",
+      "editPrice": "Preis bearbeiten",
+      "editCapacity": "Kapazität bearbeiten",
+      "editDuration": "Dauer bearbeiten"
+    },
+    "generate": {
+      "title": "Termine generieren",
+      "period": "Zeitraum",
+      "startDate": "Startdatum",
+      "endDate": "Enddatum",
+      "selectSports": "Sportarten auswählen",
+      "settings": "Einstellungen",
+      "duration": "Dauer pro Termin",
+      "capacity": "Kapazität pro Termin",
+      "price": "Preis pro Termin",
+      "generate": "Generieren",
+      "generating": "Wird generiert...",
+      "success": "Termine generiert!",
+      "noSlots": "Keine neuen Termine zu generieren. Überprüfen Sie Ihre Arbeitszeiten und ausgewählten Tage.",
+      "lunchBreak": "Mittagspause",
+      "lunchBreakDesc": "Keine Termine während dieser Zeit generieren",
+      "from": "Von",
+      "to": "bis",
+      "note": "Hinweis",
+      "noteText": "Termine werden nur während Ihrer konfigurierten Arbeitszeiten und außerhalb der geschlossenen Tage generiert.",
+      "selectDates": "Bitte wählen Sie Start- und Enddatum",
+      "selectAtLeastOneSport": "Bitte wählen Sie mindestens eine Sportart"
+    },
+    "closures": {
+      "title": "Schließungszeiten",
+      "add": "Schließung hinzufügen",
+      "reason": "Grund",
+      "startDate": "Startdatum",
+      "endDate": "Enddatum",
+      "noClosure": "Keine Schließungszeiten",
+      "deleteConfirm": "Die gesamte Schließungsperiode löschen"
+    },
+    "closureReasons": {
+      "vacation": "Urlaub",
+      "holiday": "Feiertag",
+      "maintenance": "Wartung",
+      "privateEvent": "Private Veranstaltung",
+      "closed": "Geschlossen"
+    },
+    "settings": {
+      "title": "Einstellungen",
+      "subtitle": "Passen Sie Ihre Website an und verwalten Sie Ihre Einstellungen",
+      "sections": {
+        "branding": "Branding",
+        "business": "Unternehmensinformationen",
+        "defaults": "Standardwerte",
+        "security": "Sicherheit",
+        "language": "Sprache",
+        "workingHours": "Arbeitszeiten",
+        "workingHoursDesc": "Legen Sie Ihre Öffnungstage und -zeiten fest",
+        "defaultsDesc": "Werte für neue Termine"
+      },
+      "branding": {
+        "siteName": "Website-Name",
+        "siteDescription": "Beschreibung",
+        "siteTitle": "Browser-Tab-Titel",
+        "siteTitlePlaceholder": "Sporttermin-Buchung",
+        "siteTitleHint": "Wird im Browser-Tab nach dem Website-Namen angezeigt",
+        "logo": "Logo / Symbol",
+        "primaryColor": "Primärfarbe",
+        "currency": "Währung",
+        "currencySymbol": "Symbol nach dem Preis",
+        "linkUrl": "URL-Link",
+        "headerPreview": "Header-Vorschau",
+        "orUseDefaultIcon": "Oder ein Standardsymbol verwenden",
+        "currentImage": "Aktuelles Bild",
+        "logoBackground": "Farbigen Hintergrund hinter dem Logo anzeigen",
+        "dragToPosition": "Bild ziehen zum Positionieren",
+        "scrollToZoom": "Scrollen zum Zoomen",
+        "colors": {
+          "blue": "Blau",
+          "violet": "Violett",
+          "pink": "Rosa",
+          "red": "Rot",
+          "orange": "Orange",
+          "green": "Grün",
+          "emerald": "Smaragd",
+          "cyan": "Cyan",
+          "indigo": "Indigo",
+          "gray": "Grau"
+        },
+        "custom": "Benutzerdefiniert"
+      },
+      "business": {
+        "email": "Kontakt-E-Mail",
+        "phone": "Telefon",
+        "address": "Adresse"
+      },
+      "defaults": {
+        "slotDuration": "Standarddauer",
+        "maxCapacity": "Standardkapazität",
+        "defaultPrice": "Standardpreis",
+        "minBookingAdvance": "Mindestvorlaufzeit für Buchung",
+        "minBookingAdvanceDesc": "Mindestzeit vor einem Termin für eine Buchung",
+        "noMinimum": "Kein Minimum",
+        "hours": "Stunden",
+        "minutes": "Minuten"
+      },
+      "sync": {
+        "button": "Änderungen veröffentlichen",
+        "description": "Aktualisiert die Daten für alle Kunden"
+      },
+      "security": {
+        "changePassword": "Passwort ändern",
+        "currentPassword": "Aktuelles Passwort",
+        "newPassword": "Neues Passwort",
+        "confirmPassword": "Passwort bestätigen",
+        "wrongPassword": "Das aktuelle Passwort ist falsch",
+        "passwordEmpty": "Das neue Passwort darf nicht leer sein",
+        "passwordTooShort": "Das neue Passwort muss mindestens 4 Zeichen haben",
+        "passwordMismatch": "Die neuen Passwörter stimmen nicht überein",
+        "passwordChanged": "Passwort erfolgreich geändert!",
+        "minChars": "Mindestens 4 Zeichen"
+      },
+      "language": {
+        "title": "Standardsprache",
+        "description": "Standardmäßig für Besucher angezeigte Sprache",
+        "clientCanChange": "Kunden können die Sprache selbst ändern"
+      },
+      "smtp": {
+        "title": "E-Mail-Konfiguration (SMTP)",
+        "description": "Konfigurieren Sie den E-Mail-Versand für Bestätigungen und Benachrichtigungen",
+        "enabled": "E-Mail-Versand aktivieren",
+        "host": "SMTP-Server",
+        "hostPlaceholder": "smtp.beispiel.de",
+        "port": "Port",
+        "secure": "Sichere Verbindung (SSL/TLS)",
+        "user": "Benutzername",
+        "userPlaceholder": "ihre@email.de",
+        "password": "Passwort",
+        "passwordPlaceholder": "••••••••",
+        "passwordSaved": "Passwort gespeichert. Zum Ändern eingeben.",
+        "passwordHint": "Geben Sie Ihr SMTP-Passwort oder App-Passwort ein",
+        "fromEmail": "Absender-E-Mail",
+        "fromEmailPlaceholder": "noreply@beispiel.de",
+        "fromName": "Absendername",
+        "fromNamePlaceholder": "Mein Unternehmen",
+        "notifications": "Benachrichtigungen",
+        "sendConfirmationToClient": "Bestätigungs-E-Mail an Kunden senden",
+        "notifyTeamOnBooking": "Team bei neuer Buchung benachrichtigen",
+        "teamEmails": "Team-E-Mails",
+        "teamEmailsPlaceholder": "email1@beispiel.de, email2@beispiel.de",
+        "teamEmailsHint": "E-Mails durch Kommas trennen",
+        "testEmail": "Test-E-Mail senden",
+        "testEmailSent": "Test-E-Mail gesendet!",
+        "testEmailError": "Fehler beim Senden"
+      },
+      "workingHoursWarning": "Achtung",
+      "slotsOutsideHours": "werden außerhalb der neuen Arbeitszeiten liegen",
+      "slotsWillBeRed": "Diese Termine werden in Ihrem Kalender rot angezeigt und sind für Kunden unsichtbar"
+    },
+    "workingHours": {
+      "title": "Öffnungszeiten",
+      "day": "Tag",
+      "enabled": "Geöffnet",
+      "start": "Öffnung",
+      "end": "Schließung",
+      "slotDuration": "Termindauer"
+    }
+  },
+  "login": {
+    "title": "Admin-Anmeldung",
+    "username": "Benutzername",
+    "password": "Passwort",
+    "submit": "Anmelden",
+    "submitting": "Anmeldung...",
+    "error": "Ungültige Anmeldedaten",
+    "forgotPassword": "Passwort vergessen?",
+    "demoMode": "Demo-Modus",
+    "demoWarning": "Die Daten werden lokal in Ihrem Browser gespeichert. Sie gehen verloren, wenn Sie den Verlauf, den Cache oder die Website-Daten löschen."
+  },
+  "errors": {
+    "notFound": "Seite nicht gefunden",
+    "serverError": "Serverfehler",
+    "unauthorized": "Nicht autorisiert",
+    "networkError": "Netzwerkfehler"
+  },
+  "emails": {
+    "client": {
+      "configValid": "SMTP-Konfiguration validiert!",
+      "configValidDesc": "Ihr E-Mail-Server ist korrekt konfiguriert",
+      "configDetails": "Konfigurationsdetails",
+      "smtpServer": "SMTP-Server",
+      "sslEnabled": "Aktiviert",
+      "sslStarttls": "STARTTLS",
+      "sender": "Absender",
+      "successMessage": "Ihre Kunden erhalten ihre Buchungsbestätigungen an diese Adresse!",
+      "testSentOn": "Test gesendet am"
+    },
+    "team": {
+      "newBooking": "Neue Buchung!",
+      "clientInfo": "Kundeninformationen",
+      "name": "Name",
+      "email": "E-Mail",
+      "phone": "Telefon",
+      "bookingDetails": "Buchungsdetails",
+      "sport": "Sport",
+      "date": "Datum",
+      "time": "Uhrzeit",
+      "duration": "Dauer",
+      "people": "Personen",
+      "total": "Gesamt",
+      "autoEmail": "Automatische E-Mail von"
+    }
+  },
+  "calendar": {
+    "locale": "de"
+  }
+}
+
