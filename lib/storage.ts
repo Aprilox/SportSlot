@@ -286,15 +286,21 @@ export const getSports = (): Sport[] => {
   return getFromStorage(STORAGE_KEYS.SPORTS, DEFAULT_SPORTS)
 }
 
-export const saveSports = (sports: Sport[]): void => {
+export const saveSports = (sports: Sport[], options?: { immediate?: boolean }): void => {
   saveToStorage(STORAGE_KEYS.SPORTS, sports)
   // Déclencher un événement pour la synchronisation client
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('sportsChanged', { detail: sports }))
   }
   
-  // Planifier une synchronisation DB
-  scheduleDatabaseSync()
+  // Si synchronisation immédiate demandée
+  if (options?.immediate) {
+    incrementDataVersion()
+    syncToDatabase()
+  } else {
+    // Planifier une synchronisation DB (debounced)
+    scheduleDatabaseSync()
+  }
 }
 
 // ===========================================
@@ -332,7 +338,7 @@ export const getPublishedSlots = (): TimeSlot[] => {
 }
 
 // Publier tous les créneaux non publiés et supprimer ceux marqués pour suppression
-export const publishAllSlots = async (): Promise<{ published: number, deleted: number, deletedClosures: number, synced: boolean }> => {
+export const publishAllSlots = async (): Promise<{ published: number, deleted: number, deletedClosures: number, publishedClosures: number, synced: boolean }> => {
   const slots = getSlots()
   let publishedCount = 0
   let deletedCount = 0
@@ -362,6 +368,7 @@ export const publishAllSlots = async (): Promise<{ published: number, deleted: n
   // Publier et supprimer les fermetures
   const settings = getSettings()
   let deletedClosuresCount = 0
+  let publishedClosuresCount = 0
   const updatedClosedPeriods = settings.closedPeriods
     .filter(period => {
       if (period.pendingDeletion) {
@@ -370,10 +377,15 @@ export const publishAllSlots = async (): Promise<{ published: number, deleted: n
       }
       return true
     })
-    .map(period => ({
-      ...period,
-      published: true
-    }))
+    .map(period => {
+      if (period.published !== true) {
+        publishedClosuresCount++
+      }
+      return {
+        ...period,
+        published: true
+      }
+    })
   saveSettings({ ...settings, closedPeriods: updatedClosedPeriods })
   
   // Incrémenter la version pour notifier les clients
@@ -382,7 +394,7 @@ export const publishAllSlots = async (): Promise<{ published: number, deleted: n
   // Synchroniser avec la DB
   const synced = await syncToDatabase()
   
-  return { published: publishedCount, deleted: deletedCount, deletedClosures: deletedClosuresCount, synced }
+  return { published: publishedCount, deleted: deletedCount, deletedClosures: deletedClosuresCount, publishedClosures: publishedClosuresCount, synced }
 }
 
 // Vérifier s'il y a des créneaux non publiés ou à supprimer
@@ -516,23 +528,38 @@ export const updateSlotsWorkingHoursStatus = (workingHours: WorkingHours[]): num
 
 // Récupérer uniquement les créneaux valides pour le client
 // Un créneau est visible si :
-// - Il est publié (published !== false) OU s'il est marqué pendingDeletion (car la suppression n'est pas confirmée)
-// - OU il a des valeurs originales (il était publié avant d'être déplacé)
+// - Il est publié (published === true ou undefined) ET n'est PAS marqué pendingDeletion
+// - OU il a des valeurs originales (il était publié avant d'être déplacé) - dans ce cas on affiche la position originale
 // - Il n'est PAS hors horaires de travail
 // 
-// IMPORTANT: Si un créneau a été déplacé/redimensionné mais pas encore publié,
-// on affiche la position/durée ORIGINALE pour le client
+// IMPORTANT: 
+// - Les créneaux non publiés (published === false) ne sont JAMAIS visibles côté client
+// - Les créneaux pendingDeletion ne sont JAMAIS visibles côté client
+// - Si un créneau a été déplacé/redimensionné mais pas encore publié, on affiche la position/durée ORIGINALE
 export const getValidPublishedSlots = (): TimeSlot[] => {
   return getSlots()
     .filter(slot => {
-      // Un slot pendingDeletion reste visible côté client jusqu'à confirmation
-      const isPublishedOrPending = slot.published !== false || slot.pendingDeletion === true
-      // Un slot avec des valeurs originales était publié avant d'être déplacé - il doit rester visible
-      const hasOriginalValues = !!(slot.originalDate || slot.originalTime || slot.originalDuration)
-      const isWithinWorkingHours = slot.outsideWorkingHours !== true
+      // Créneaux en attente de suppression = invisibles côté client
+      if (slot.pendingDeletion === true) {
+        return false
+      }
       
-      // Visible si : (publié OU en attente de suppression OU déplacé) ET dans les horaires
-      return (isPublishedOrPending || hasOriginalValues) && isWithinWorkingHours
+      // Créneaux non publiés sans valeurs originales = invisibles côté client
+      if (slot.published === false && !slot.originalDate && !slot.originalTime && !slot.originalDuration) {
+        return false
+      }
+      
+      // Créneaux hors horaires = invisibles côté client
+      if (slot.outsideWorkingHours === true) {
+        return false
+      }
+      
+      // Un slot avec des valeurs originales était publié avant d'être déplacé - il doit rester visible
+      // à sa position ORIGINALE
+      const hasOriginalValues = !!(slot.originalDate || slot.originalTime || slot.originalDuration)
+      
+      // Visible si publié OU s'il a des valeurs originales (était publié avant modification)
+      return slot.published !== false || hasOriginalValues
     })
     .map(slot => {
       // Si le créneau a des valeurs originales (non publiées), les utiliser pour le client

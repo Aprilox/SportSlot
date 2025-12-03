@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
         })
         
         if (!slot) {
-          return { success: false, error: 'Créneau non trouvé' }
+          return { success: false, errorCode: 'SLOT_NOT_FOUND' }
         }
         
         // 2. Vérifier les places disponibles (dans la transaction)
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
         if (availablePlaces < numberOfPeople) {
           return { 
             success: false, 
-            error: `Plus assez de places disponibles (${availablePlaces} restantes)`,
+            errorCode: 'NOT_ENOUGH_PLACES',
             availablePlaces
           }
         }
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
         if (updateResult.count === 0) {
           return { 
             success: false, 
-            error: 'Les places ont été réservées par quelqu\'un d\'autre',
+            errorCode: 'RACE_CONDITION',
             availablePlaces: 0
           }
         }

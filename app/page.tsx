@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { useTranslation } from "react-i18next"
+import { useDialog } from "@/components/ui/custom-dialog"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -40,6 +41,7 @@ import {
 
 export default function Home() {
   const { t, i18n } = useTranslation()
+  const { showAlert } = useDialog()
   const [isLoading, setIsLoading] = useState(true)
   const [sports, setSports] = useState<Sport[]>([])
   const [selectedSport, setSelectedSport] = useState<string>("all")
@@ -70,6 +72,8 @@ export default function Home() {
   const [currentTime, setCurrentTime] = useState(new Date())
   const [closedPeriods, setClosedPeriods] = useState<ClosedPeriod[]>([])
   const [selectedDayIndex, setSelectedDayIndex] = useState(0) // Pour mobile: jour sélectionné dans la semaine
+  const [swipeStart, setSwipeStart] = useState<number | null>(null) // Pour le swipe down to close
+  const [swipeOffset, setSwipeOffset] = useState(0) // Offset actuel du swipe en px
 
   // Charger les données initiales (uniquement créneaux publiés pour les clients)
   const loadData = useCallback(() => {
@@ -139,11 +143,23 @@ export default function Home() {
       
       if (slotDateTime < currentTime || slotDateTime < minBookingTime) {
         // Fermer le modal avec un message
-        alert(t('home.slot.tooLate'))
         setBookingModal({ isOpen: false, slot: null, sport: null, availableSports: [], selectingSport: false })
+        showAlert(t('home.slot.tooLate'), { variant: 'warning' })
       }
     }
-  }, [currentTime, bookingModal.isOpen, bookingModal.slot, settings?.minBookingAdvance, bookingSuccess])
+  }, [currentTime, bookingModal.isOpen, bookingModal.slot, settings?.minBookingAdvance, bookingSuccess, showAlert, t])
+
+  // Bloquer le scroll du body quand le modal est ouvert
+  useEffect(() => {
+    if (bookingModal.isOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [bookingModal.isOpen])
 
   // Branding
   const branding = settings?.branding
@@ -402,7 +418,8 @@ export default function Home() {
         selectingSport: false 
       })
     }
-    setBookingForm({ name: "", email: "", phone: "", numberOfPeople: 1 })
+    // Garder nom/email/téléphone, reset uniquement le nombre de personnes
+    setBookingForm(prev => ({ ...prev, numberOfPeople: 1 }))
     setBookingSuccess(false)
   }
 
@@ -446,8 +463,21 @@ export default function Home() {
         if (!result.success) {
           // Fermer le modal de réservation d'abord
           setBookingModal({ isOpen: false, slot: null, sport: null, availableSports: [], selectingSport: false })
+          
+          // Traduire les codes d'erreur
+          let errorMessage = t('booking.error')
+          if (result.errorCode === 'SLOT_NOT_FOUND') {
+            errorMessage = t('booking.errorMessages.slotNotFound')
+          } else if (result.errorCode === 'NOT_ENOUGH_PLACES') {
+            errorMessage = t('booking.errorMessages.notEnoughPlaces', { count: result.availablePlaces || 0 })
+          } else if (result.errorCode === 'RACE_CONDITION') {
+            errorMessage = t('booking.errorMessages.raceCondition')
+          } else if (result.error) {
+            errorMessage = result.error
+          }
+          
           // Puis afficher la popup d'erreur
-          setBookingError(result.error || t('booking.error'))
+          setBookingError(errorMessage)
           // Recharger les données pour avoir l'état actuel
           loadData()
           return
@@ -825,6 +855,10 @@ export default function Home() {
   }
 
   const closeBookingModal = () => {
+    // Reset le formulaire uniquement après un succès (pour permettre de réessayer si erreur/annulation)
+    if (bookingSuccess) {
+      setBookingForm({ name: "", email: "", phone: "", numberOfPeople: 1 })
+    }
     setBookingModal({ isOpen: false, slot: null, sport: null, availableSports: [], selectingSport: false })
     setBookingSuccess(false)
   }
@@ -1549,21 +1583,63 @@ export default function Home() {
         <div 
           className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4"
           onClick={closeBookingModal}
+          style={{ 
+            opacity: swipeOffset > 0 ? Math.max(0.3, 1 - swipeOffset / 300) : 1,
+            transition: swipeOffset === 0 ? 'opacity 0.2s ease-out' : 'none'
+          }}
         >
           <div 
             className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[90vh] overflow-y-auto animate-in fade-in slide-in-from-bottom sm:zoom-in-95 duration-200"
             onClick={e => e.stopPropagation()}
+            style={{ 
+              transform: `translateY(${swipeOffset}px)`,
+              transition: swipeOffset === 0 ? 'transform 0.3s ease-out' : 'none'
+            }}
           >
-            {/* Handle bar pour mobile */}
-            <div className="sm:hidden flex justify-center pt-3 pb-1">
-              <div className="w-12 h-1.5 bg-white/30 rounded-full" />
-            </div>
-            
-            {/* Header du modal */}
+            {/* Header du modal - avec swipe down to close sur mobile */}
             <div 
-              className="p-4 sm:p-6 text-white relative"
+              className="p-4 sm:p-6 pt-3 sm:pt-6 text-white relative rounded-t-3xl sm:rounded-t-3xl touch-pan-y"
               style={{ backgroundColor: effectiveColor }}
+              onTouchStart={(e) => {
+                setSwipeStart(e.touches[0].clientY)
+              }}
+              onTouchMove={(e) => {
+                if (swipeStart === null) return
+                const diff = e.touches[0].clientY - swipeStart
+                // Limiter le swipe vers le haut et appliquer une résistance vers le bas
+                if (diff > 0) {
+                  // Résistance progressive (plus on descend, plus c'est dur)
+                  setSwipeOffset(Math.min(diff * 0.8, 250))
+                } else {
+                  setSwipeOffset(0)
+                }
+              }}
+              onTouchEnd={() => {
+                // Si on a assez descendu, fermer le modal
+                if (swipeOffset > 120) {
+                  // Animation de sortie
+                  setSwipeOffset(500)
+                  setTimeout(() => {
+                    closeBookingModal()
+                    setSwipeOffset(0)
+                  }, 200)
+                } else {
+                  // Revenir à la position initiale avec animation
+                  setSwipeOffset(0)
+                }
+                setSwipeStart(null)
+              }}
             >
+              {/* Handle bar pour mobile - indique qu'on peut swiper */}
+              <div className="sm:hidden flex justify-center mb-2 cursor-grab active:cursor-grabbing">
+                <div 
+                  className="w-12 h-1.5 rounded-full transition-all duration-200"
+                  style={{ 
+                    backgroundColor: swipeOffset > 120 ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.3)',
+                    width: swipeOffset > 120 ? '60px' : '48px'
+                  }}
+                />
+              </div>
               <button 
                 onClick={closeBookingModal}
                 className="absolute top-3 sm:top-4 right-3 sm:right-4 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"

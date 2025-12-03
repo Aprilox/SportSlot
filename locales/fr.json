@@ -152,7 +152,10 @@
       "message": "Une erreur est survenue lors de la réservation. Veuillez réessayer.",
       "slotFull": "Ce créneau est complet.",
       "invalidEmail": "Adresse email invalide.",
-      "requiredFields": "Veuillez remplir tous les champs obligatoires."
+      "requiredFields": "Veuillez remplir tous les champs obligatoires.",
+      "slotNotFound": "Ce créneau n'existe plus.",
+      "notEnoughPlaces": "Plus assez de places disponibles ({{count}} restante(s))",
+      "raceCondition": "Les places ont été réservées par quelqu'un d'autre."
     }
   },
   "footer": {
@@ -238,8 +241,14 @@
       "deleteOutsideSlots": "Voulez-vous supprimer ces créneaux",
       "pendingDeletion": "En attente de suppression",
       "cancelDeletion": "Annuler la suppression",
-      "closuresPublished": "fermetures publiées",
-      "unpublishedClosures": "fermetures non publiées"
+      "closuresPublished": "fermeture(s) publiée(s)",
+      "unpublishedClosures": "fermetures non publiées",
+      "publishSuccess": "Publication réussie !",
+      "publishSuccessSlots": "{{count}} créneau(x) publié(s)",
+      "publishSuccessClosures": "{{count}} fermeture(s) publiée(s)",
+      "publishSuccessBoth": "{{slots}} créneau(x) et {{closures}} fermeture(s) publiés",
+      "publishNoChanges": "Tout est déjà publié",
+      "publishOnlyClosures": "{{count}} jour(s) de fermeture publiés"
     },
     "sports": {
       "title": "Gestion des sports",
@@ -251,6 +260,7 @@
       "enabled": "Actif",
       "disabled": "Inactif",
       "noSports": "Aucun sport configuré",
+      "delete": "Supprimer le sport",
       "deleteConfirm": "Supprimer ce sport ?",
       "deleteWarning": "Attention",
       "willBeDeleted": "seront supprimés",
@@ -273,7 +283,7 @@
       "deleteConfirm": "Supprimer ce créneau ?",
       "noSportEnabled": "Veuillez activer au moins un sport pour créer des créneaux.",
       "overlapError": "Impossible : cette durée causerait un chevauchement avec un autre créneau.",
-      "noWorkingHours": "Ce jour n'a pas d'horaires de travail configurés.",
+      "noWorkingHours": "Non ouvert",
       "durationTooLong": "Durée trop longue !",
       "remainingTime": "il reste",
       "beforeClosing": "avant la fermeture",
@@ -428,7 +438,8 @@
         "teamEmailsHint": "Séparez les emails par des virgules",
         "testEmail": "Envoyer un email de test",
         "testEmailSent": "Email de test envoyé !",
-        "testEmailError": "Erreur lors de l'envoi"
+        "testEmailError": "Erreur lors de l'envoi",
+        "testEmailWillBeSentTo": "Un email de test sera envoyé à :"
       },
       "workingHoursWarning": "Attention",
       "slotsOutsideHours": "seront hors des nouveaux horaires",

@@ -20,13 +20,14 @@ export function DataLoader({ children }: { children: React.ReactNode }) {
     async function loadData() {
       try {
         // Vérifier si une synchronisation est en cours (éviter d'écraser des modifications)
-        // Seulement si on a déjà chargé une fois
-        if (hasLoadedRef.current) {
-          const pendingSync = localStorage.getItem('sportslot_pending_sync')
-          if (pendingSync === 'true') {
-            setIsLoading(false)
-            return
-          }
+        const pendingSync = localStorage.getItem('sportslot_pending_sync')
+        if (pendingSync === 'true') {
+          // Une sync est en cours, attendre un peu et réessayer
+          console.log('⏳ Sync en cours, on attend...')
+          setTimeout(() => {
+            loadData()
+          }, 500)
+          return
         }
         
         // Appeler l'API pour récupérer les données et le mode

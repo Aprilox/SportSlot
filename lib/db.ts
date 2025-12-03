@@ -263,28 +263,45 @@ export async function getSportsFromDB(): Promise<Sport[] | null> {
 
 /**
  * Sauvegarde les sports dans la DB
+ * Utilise upsert pour préserver les relations avec les créneaux
  */
 export async function saveSportsToDB(sports: Sport[]): Promise<boolean> {
   if (!isUsingDatabase()) return false
   
   const result = await withPrisma(async (prisma) => {
     try {
-      // Transaction pour remplacer tous les sports
+      const sportIds = sports.map(s => s.id)
+      
       await prisma.$transaction(async (tx) => {
-        // Supprimer tous les sports existants
-        await tx.sport.deleteMany()
-        
-        // Créer les nouveaux
-        await tx.sport.createMany({
-          data: sports.map((s, index) => ({
-            id: s.id,
-            name: s.name,
-            enabled: s.enabled,
-            icon: s.icon,
-            imageUrl: s.imageUrl || null,
-            order: index,
-          }))
+        // Supprimer les sports qui n'existent plus (mais pas ceux qui sont juste modifiés)
+        await tx.sport.deleteMany({
+          where: {
+            id: { notIn: sportIds }
+          }
         })
+        
+        // Upsert chaque sport (créer ou mettre à jour)
+        for (let index = 0; index < sports.length; index++) {
+          const s = sports[index]
+          await tx.sport.upsert({
+            where: { id: s.id },
+            update: {
+              name: s.name,
+              enabled: s.enabled,
+              icon: s.icon,
+              imageUrl: s.imageUrl || null,
+              order: index,
+            },
+            create: {
+              id: s.id,
+              name: s.name,
+              enabled: s.enabled,
+              icon: s.icon,
+              imageUrl: s.imageUrl || null,
+              order: index,
+            }
+          })
+        }
       })
       return true
     } catch (error) {

@@ -25,24 +25,30 @@
 - 📅 **Calendrier interactif** de réservation par semaine
 - 🎾 **Filtrage par sport** avec icônes personnalisées
 - 📱 **Responsive** - Mobile, tablette et desktop
-- 🌍 **Multi-langue** - Français, English, Deutsch
+- 👆 **Swipe to close** - Fermez les popups en glissant (mobile)
+- 💾 **Formulaire persistant** - Vos infos sont gardées si fermeture accidentelle
+- 🌍 **Multi-langue** - Français, English, Deutsch (erreurs incluses)
 - 📧 **Confirmation par email** (client + équipe)
 - ⏰ **Temps réel** - Mise à jour instantanée des disponibilités
 - 🔒 **Protection anti-surréservation** - Transactions atomiques
+- 🎨 **Popups stylées** - Modals modernes au lieu des alertes navigateur
 
 ### 🔧 Côté Admin
-- 📊 **Vue / Édition** - Consultez ou modifiez l'agenda
+- 📊 **Vue / Édition** - Consultez (= vue client) ou modifiez l'agenda
+- 👁️ **Mode Vue** - Prévisualisez exactement ce que vos clients voient
 - 🗓️ **Glisser-déposer** - Créez, déplacez, redimensionnez les créneaux
 - ✏️ **Création par sélection** - Glissez pour définir la durée
+- 🗑️ **Mode Gomme** - Sélectionnez plusieurs créneaux à supprimer
 - 🏃 **Gestion des sports** - Icônes emoji ou images personnalisées
 - 🚫 **Gestion des fermetures** - Jours fériés, vacances, maintenance
 - ⏰ **Horaires d'ouverture** - Par jour de la semaine
 - 🎨 **Personnalisation** - Logo, couleurs, nom du site, devise
-- 📧 **Configuration SMTP** - Emails automatiques
+- 📧 **Configuration SMTP** - Emails automatiques (textes traduits)
 - 🔐 **Authentification sécurisée** - Hashage des mots de passe
 - 📋 **Gestion des réservations** - Visualisation et annulation
 - 🔔 **Notifications** - Alertes pour nouvelles réservations
-- 📤 **Publication** - Contrôlez ce que les clients voient
+- 📤 **Publication** - Messages clairs sur ce qui est publié
+- 🎨 **Popups stylées** - Confirmations et alertes modernes
 
 ---
 
@@ -153,8 +159,10 @@ pnpm build && pnpm start
 
 | Mode | Icône | Description |
 |------|-------|-------------|
-| **Vue** | 👁️ | Consulter l'agenda et les réservations |
-| **Édition** | ✏️ | Créer, modifier, supprimer des créneaux |
+| **Vue** | 👁️ | Voir exactement ce que les clients voient (créneaux publiés uniquement) |
+| **Édition** | ✏️ | Créer, modifier, supprimer des créneaux (tout visible) |
+
+> 💡 **Astuce** : Utilisez le mode Vue pour prévisualiser votre agenda avant de publier !
 
 ### Création de Créneaux
 
@@ -176,11 +184,16 @@ pnpm build && pnpm start
 
 Les modifications ne sont **pas visibles** par les clients tant qu'elles ne sont pas publiées :
 
-- 🟠 **Orange** = Non publié (nouveau ou modifié)
-- 🟢 **Couleur normale** = Publié et visible
-- 🔴 **Rouge** = Hors horaires ou en attente de suppression
+| Couleur | Signification | Visible client |
+|---------|---------------|----------------|
+| 🟠 Orange | Non publié (nouveau ou modifié) | ❌ Non |
+| 🟢 Couleur normale | Publié | ✅ Oui |
+| 🔴 Rouge | Hors horaires ou en attente de suppression | ❌ Non |
 
-Cliquez sur **Publier** pour appliquer les changements.
+Cliquez sur **🚀 Publier** pour appliquer les changements. Un message clair indique :
+- Combien de créneaux publiés
+- Combien de fermetures publiées
+- Si tout était déjà publié
 
 ---
 
@@ -246,7 +259,7 @@ sportslot/
 │   │   └── login/         # Connexion
 │   └── api/               # API Routes
 ├── components/            # Composants React
-│   └── ui/               # UI (shadcn/ui)
+│   └── ui/               # UI (shadcn/ui + custom-dialog)
 ├── lib/                   # Utilitaires
 │   ├── config.ts         # Configuration
 │   ├── db.ts             # Base de données
@@ -269,6 +282,8 @@ sportslot/
 - ✅ **Transactions atomiques** pour les réservations
 - ✅ **Protection anti-concurrence** (pas de surréservation)
 - ✅ **Validation côté serveur** de toutes les données
+- ✅ **Nodemailer sécurisé** - v7.0.11+ (vulnérabilités corrigées)
+- ✅ **Formulaires accessibles** - Conformes aux standards W3C
 - ⚠️ **Changez** `HASH_SECRET` en production !
 
 ---
@@ -303,6 +318,20 @@ La langue admin est configurable dans les paramètres.
 ---
 
 ## 📝 Changelog
+
+### v1.2.0
+- ✅ **Popups personnalisées** - Remplace les alert/confirm natifs par des modals stylés
+- ✅ **Swipe to close** - Fermez les popups en glissant vers le bas (mobile)
+- ✅ **Animation fluide** - Le modal suit le doigt avec retour élastique
+- ✅ **Conservation du formulaire** - Les infos client sont gardées si fermeture accidentelle
+- ✅ **Mode Vue amélioré** - Affiche exactement ce que le client voit (créneaux publiés uniquement)
+- ✅ **Messages de publication** - Messages clairs sans infos techniques
+- ✅ **Traductions erreurs** - Toutes les erreurs de réservation traduites (FR/EN/DE)
+- ✅ **Blocage scroll** - Le contenu derrière les popups ne scroll plus
+- ✅ **Fix créneaux non publiés** - Les créneaux en attente ne sont plus visibles côté client
+- ✅ **Fix gomme** - Le mode gomme se désactive en passant en mode Vue
+- 🔒 **Sécurité nodemailer** - Mise à jour v7.0.11 (fix vulnérabilités DoS + domain)
+- ♿ **Accessibilité formulaires** - Champs password conformes aux standards
 
 ### v1.1.0
 - ✅ Création de créneaux par glisser-déposer

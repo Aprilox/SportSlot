@@ -6,6 +6,7 @@ import ClientI18nProvider from "@/components/ClientI18nProvider"
 import DynamicFavicon from "@/components/DynamicFavicon"
 import DynamicTitle from "@/components/DynamicTitle"
 import { DataLoader } from "@/components/DataLoader"
+import { DialogProvider } from "@/components/ui/custom-dialog"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -29,9 +30,11 @@ export default function RootLayout({
       <body>
         <ClientI18nProvider>
           <DataLoader>
-            <DynamicFavicon />
-            <DynamicTitle />
-            {children}
+            <DialogProvider>
+              <DynamicFavicon />
+              <DynamicTitle />
+              {children}
+            </DialogProvider>
           </DataLoader>
         </ClientI18nProvider>
       </body>

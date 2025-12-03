@@ -152,7 +152,10 @@
       "message": "An error occurred during booking. Please try again.",
       "slotFull": "This slot is full.",
       "invalidEmail": "Invalid email address.",
-      "requiredFields": "Please fill in all required fields."
+      "requiredFields": "Please fill in all required fields.",
+      "slotNotFound": "This slot no longer exists.",
+      "notEnoughPlaces": "Not enough places available ({{count}} remaining)",
+      "raceCondition": "The places were booked by someone else."
     }
   },
   "footer": {
@@ -238,8 +241,14 @@
       "deleteOutsideSlots": "Do you want to delete these slots",
       "pendingDeletion": "Pending deletion",
       "cancelDeletion": "Cancel deletion",
-      "closuresPublished": "closures published",
-      "unpublishedClosures": "unpublished closures"
+      "closuresPublished": "closure(s) published",
+      "unpublishedClosures": "unpublished closures",
+      "publishSuccess": "Published successfully!",
+      "publishSuccessSlots": "{{count}} slot(s) published",
+      "publishSuccessClosures": "{{count}} closure(s) published",
+      "publishSuccessBoth": "{{slots}} slot(s) and {{closures}} closure(s) published",
+      "publishNoChanges": "Everything is already published",
+      "publishOnlyClosures": "{{count}} closure day(s) published"
     },
     "sports": {
       "title": "Sports management",
@@ -251,6 +260,7 @@
       "enabled": "Active",
       "disabled": "Inactive",
       "noSports": "No sports configured",
+      "delete": "Delete sport",
       "deleteConfirm": "Delete this sport?",
       "deleteWarning": "Warning",
       "willBeDeleted": "will be deleted",
@@ -273,7 +283,7 @@
       "deleteConfirm": "Delete this slot?",
       "noSportEnabled": "Please enable at least one sport to create slots.",
       "overlapError": "Cannot: this duration would overlap with another slot.",
-      "noWorkingHours": "This day has no configured working hours.",
+      "noWorkingHours": "Not open",
       "durationTooLong": "Duration too long!",
       "remainingTime": "remaining",
       "beforeClosing": "before closing",
@@ -428,7 +438,8 @@
         "teamEmailsHint": "Separate emails with commas",
         "testEmail": "Send test email",
         "testEmailSent": "Test email sent!",
-        "testEmailError": "Error sending email"
+        "testEmailError": "Error sending email",
+        "testEmailWillBeSentTo": "A test email will be sent to:"
       },
       "workingHoursWarning": "Warning",
       "slotsOutsideHours": "will be outside the new working hours",

@@ -6,6 +6,21 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Autoriser les requêtes cross-origin en développement
+  allowedDevOrigins: [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'ws://localhost:3000',
+    'ws://127.0.0.1:3000',
+  ],
+  // Configuration webpack pour le HMR
+  webpackDevMiddleware: (config) => {
+    config.watchOptions = {
+      ...config.watchOptions,
+      aggregateTimeout: 200,
+    }
+    return config
+  },
 }
 
 export default nextConfig

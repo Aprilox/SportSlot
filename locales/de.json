@@ -152,7 +152,10 @@
       "message": "Bei der Buchung ist ein Fehler aufgetreten. Bitte versuchen Sie es erneut.",
       "slotFull": "Dieser Termin ist ausgebucht.",
       "invalidEmail": "Ungültige E-Mail-Adresse.",
-      "requiredFields": "Bitte füllen Sie alle Pflichtfelder aus."
+      "requiredFields": "Bitte füllen Sie alle Pflichtfelder aus.",
+      "slotNotFound": "Dieser Termin existiert nicht mehr.",
+      "notEnoughPlaces": "Nicht genug Plätze verfügbar ({{count}} übrig)",
+      "raceCondition": "Die Plätze wurden von jemand anderem gebucht."
     }
   },
   "footer": {
@@ -238,8 +241,14 @@
       "deleteOutsideSlots": "Möchten Sie diese Termine löschen",
       "pendingDeletion": "Wartet auf Löschung",
       "cancelDeletion": "Löschung abbrechen",
-      "closuresPublished": "Schließungen veröffentlicht",
-      "unpublishedClosures": "unveröffentlichte Schließungen"
+      "closuresPublished": "Schließung(en) veröffentlicht",
+      "unpublishedClosures": "unveröffentlichte Schließungen",
+      "publishSuccess": "Erfolgreich veröffentlicht!",
+      "publishSuccessSlots": "{{count}} Termin(e) veröffentlicht",
+      "publishSuccessClosures": "{{count}} Schließung(en) veröffentlicht",
+      "publishSuccessBoth": "{{slots}} Termin(e) und {{closures}} Schließung(en) veröffentlicht",
+      "publishNoChanges": "Alles ist bereits veröffentlicht",
+      "publishOnlyClosures": "{{count}} Schließungstag(e) veröffentlicht"
     },
     "sports": {
       "title": "Sportartenverwaltung",
@@ -251,6 +260,7 @@
       "enabled": "Aktiv",
       "disabled": "Inaktiv",
       "noSports": "Keine Sportarten konfiguriert",
+      "delete": "Sportart löschen",
       "deleteConfirm": "Diese Sportart löschen?",
       "deleteWarning": "Achtung",
       "willBeDeleted": "werden gelöscht",
@@ -273,7 +283,7 @@
       "deleteConfirm": "Diesen Termin löschen?",
       "noSportEnabled": "Bitte aktivieren Sie mindestens eine Sportart, um Termine zu erstellen.",
       "overlapError": "Nicht möglich: Diese Dauer würde sich mit einem anderen Termin überschneiden.",
-      "noWorkingHours": "Dieser Tag hat keine konfigurierten Arbeitszeiten.",
+      "noWorkingHours": "Nicht geöffnet",
       "durationTooLong": "Dauer zu lang!",
       "remainingTime": "verbleiben noch",
       "beforeClosing": "vor Schließung",
@@ -428,7 +438,8 @@
         "teamEmailsHint": "E-Mails durch Kommas trennen",
         "testEmail": "Test-E-Mail senden",
         "testEmailSent": "Test-E-Mail gesendet!",
-        "testEmailError": "Fehler beim Senden"
+        "testEmailError": "Fehler beim Senden",
+        "testEmailWillBeSentTo": "Eine Test-E-Mail wird gesendet an:"
       },
       "workingHoursWarning": "Achtung",
       "slotsOutsideHours": "werden außerhalb der neuen Arbeitszeiten liegen",

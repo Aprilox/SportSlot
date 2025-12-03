@@ -34,6 +34,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { useDialog } from "@/components/ui/custom-dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -107,6 +108,7 @@ const FullCalendar = dynamic(() => import("@fullcalendar/react"), {
 export default function AdminPage() {
   const { t, i18n } = useTranslation()
   const router = useRouter()
+  const { showAlert, showConfirm } = useDialog()
   const [isPageLoading, setIsPageLoading] = useState(true)
   const [sports, setSports] = useState<Sport[]>([])
   const [slots, setSlots] = useState<TimeSlot[]>([])
@@ -419,13 +421,13 @@ export default function AdminPage() {
   }
 
   // Générer les créneaux avec les paramètres avancés
-  const generateSlotsAdvanced = () => {
+  const generateSlotsAdvanced = async () => {
     if (!generateForm.startDate || !generateForm.endDate) {
-      alert(t('admin.generate.selectDates'))
+      await showAlert(t('admin.generate.selectDates'), { variant: 'warning' })
       return
     }
     if (generateForm.sportIds.length === 0) {
-      alert(t('admin.generate.selectAtLeastOneSport'))
+      await showAlert(t('admin.generate.selectAtLeastOneSport'), { variant: 'warning' })
       return
     }
 
@@ -504,9 +506,9 @@ export default function AdminPage() {
       setSlots(updatedSlots)
       saveSlots(updatedSlots)
       setIsGenerateDialogOpen(false)
-      alert(`${newSlots.length} ${t('admin.generate.success')}`)
+      await showAlert(`${newSlots.length} ${t('admin.generate.success')}`, { variant: 'success' })
     } else {
-      alert(t('admin.generate.noSlots'))
+      await showAlert(t('admin.generate.noSlots'), { variant: 'warning' })
     }
   }
 
@@ -516,8 +518,7 @@ export default function AdminPage() {
     if (editingSport) {
       const updatedSports = sports.map((sport) => (sport.id === editingSport.id ? { ...sport, ...sportForm } : sport))
       setSports(updatedSports)
-      saveSports(updatedSports)
-      incrementDataVersion() // Notifier le client
+      saveSports(updatedSports, { immediate: true })
     } else {
       const newSport: Sport = {
         id: Date.now().toString(),
@@ -526,8 +527,7 @@ export default function AdminPage() {
       }
       const updatedSports = [...sports, newSport]
       setSports(updatedSports)
-      saveSports(updatedSports)
-      incrementDataVersion() // Notifier le client
+      saveSports(updatedSports, { immediate: true })
     }
 
     setSportForm({ name: "", icon: "⚽", imageUrl: "" })
@@ -545,7 +545,7 @@ export default function AdminPage() {
     setIsSportDialogOpen(true)
   }
 
-  const handleDeleteSport = (sportId: string) => {
+  const handleDeleteSport = async (sportId: string) => {
     const sportToDelete = sports.find(s => s.id === sportId)
     if (!sportToDelete) return
 
@@ -580,11 +580,11 @@ export default function AdminPage() {
       }
     }
 
-    if (confirm(confirmMessage)) {
+    const confirmed = await showConfirm(confirmMessage, { variant: 'warning', title: t('admin.sports.delete') })
+    if (confirmed) {
       // Supprimer le sport
       const updatedSports = sports.filter((s) => s.id !== sportId)
       setSports(updatedSports)
-      saveSports(updatedSports)
 
       // Mettre à jour les créneaux
       const updatedSlots = slots
@@ -610,10 +610,10 @@ export default function AdminPage() {
         })
 
       setSlots(updatedSlots)
-      saveSlots(updatedSlots)
-
-      // Incrémenter la version pour synchronisation client
-      incrementDataVersion()
+      
+      // Sauvegarder les deux en même temps avec sync immédiate
+      saveSports(updatedSports, { immediate: true })
+      saveSlots(updatedSlots, { immediate: true })
     }
   }
 
@@ -628,7 +628,7 @@ export default function AdminPage() {
   }
 
   // Sauvegarder les modifications d'horaires de travail avec vérification des créneaux affectés
-  const saveWorkingHours = () => {
+  const saveWorkingHours = async () => {
     // Trouver les créneaux qui seront hors horaires avec les nouveaux paramètres
     const affectedSlots = findSlotsOutsideWorkingHours(slots, editableWorkingHours)
     
@@ -643,7 +643,8 @@ export default function AdminPage() {
         `${t('admin.settings.slotsWillBeRed') || 'Ces créneaux apparaîtront en rouge dans votre agenda et seront invisibles pour les clients'}.\n\n` +
         `${t('common.confirm')} ?`
       
-      if (!confirm(confirmMessage)) {
+      const confirmed = await showConfirm(confirmMessage, { variant: 'warning' })
+      if (!confirmed) {
         return // L'admin a annulé
       }
     }
@@ -669,8 +670,7 @@ export default function AdminPage() {
   const toggleSport = (sportId: string) => {
     const updatedSports = sports.map((sport) => (sport.id === sportId ? { ...sport, enabled: !sport.enabled } : sport))
     setSports(updatedSports)
-    saveSports(updatedSports)
-    incrementDataVersion() // Notifier le client
+    saveSports(updatedSports, { immediate: true }) // Sync immédiate pour éviter la perte de données
   }
 
   const handleAddVacation = (e: React.FormEvent) => {
@@ -699,8 +699,9 @@ export default function AdminPage() {
     saveSettings(updatedSettings)
   }
 
-  const handleDeleteSlot = (slotId: string, skipConfirm = false) => {
-    if (skipConfirm || confirm(t('admin.slots.deleteConfirm'))) {
+  const handleDeleteSlot = async (slotId: string, skipConfirm = false) => {
+    const confirmed = skipConfirm || await showConfirm(t('admin.slots.deleteConfirm'), { variant: 'warning' })
+    if (confirmed) {
       const updatedSlots = slots.filter((s) => s.id !== slotId)
       setSlots(updatedSlots)
       saveSlots(updatedSlots)
@@ -984,9 +985,28 @@ export default function AdminPage() {
   }, [])
 
   const filteredSlots = useMemo(() => {
-    if (selectedSportFilter === "all") return slots
-    return slots.filter((s) => (s.sportIds || [s.sportId]).includes(selectedSportFilter))
-  }, [selectedSportFilter, slots])
+    let result = slots
+    
+    // En mode Vue, on ne montre que les créneaux publiés (comme le client les voit)
+    if (agendaMode === "view") {
+      result = result.filter(s => {
+        // Créneaux en attente de suppression = invisibles
+        if (s.pendingDeletion === true) return false
+        // Créneaux non publiés = invisibles (sauf s'ils ont des valeurs originales)
+        if (s.published === false && !s.originalDate && !s.originalTime && !s.originalDuration) return false
+        // Créneaux hors horaires = invisibles
+        if (s.outsideWorkingHours === true) return false
+        return true
+      })
+    }
+    
+    // Filtrer par sport si nécessaire
+    if (selectedSportFilter !== "all") {
+      result = result.filter((s) => (s.sportIds || [s.sportId]).includes(selectedSportFilter))
+    }
+    
+    return result
+  }, [selectedSportFilter, slots, agendaMode])
 
   const calendarEvents = useMemo(() => {
     return filteredSlots.map((slot) => {
@@ -1068,50 +1088,58 @@ export default function AdminPage() {
 
   // Événements de fermeture pour le calendrier (affichage en background)
   const closureEvents = useMemo(() => {
-    return settings.closedPeriods.flatMap((period) => {
-      const events = []
-      const start = new Date(period.startDate + "T12:00:00")
-      const end = new Date(period.endDate + "T12:00:00")
-      const isPublished = period.published === true
-      const isPendingDeletion = period.pendingDeletion === true
-      
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const dateStr = formatDateLocal(d)
-        
-        // Déterminer le titre et la couleur selon le statut
-        let title = ""
-        let bgColor = ""
-        
-        if (isPendingDeletion) {
-          title = `🗑️ ${getClosureReasonText(period.reason)}`
-          bgColor = "#fce7f3" // Rose pour suppression
-        } else if (isPublished) {
-          title = `📅 ${getClosureReasonText(period.reason)}`
-          bgColor = "#fee2e2" // Rouge clair pour publié
-        } else {
-          title = `🟠 ${getClosureReasonText(period.reason)}`
-          bgColor = "#ffedd5" // Orange pour non publié
+    return settings.closedPeriods
+      .filter((period) => {
+        // En mode Vue, on ne montre que les fermetures publiées (comme le client les voit)
+        if (agendaMode === "view") {
+          return period.published === true && !period.pendingDeletion
         }
+        return true
+      })
+      .flatMap((period) => {
+        const events = []
+        const start = new Date(period.startDate + "T12:00:00")
+        const end = new Date(period.endDate + "T12:00:00")
+        const isPublished = period.published === true
+        const isPendingDeletion = period.pendingDeletion === true
         
-        events.push({
-          id: `closure-${period.id}-${dateStr}`,
-          title,
-          start: dateStr,
-          allDay: true,
-          display: "background",
-          backgroundColor: bgColor,
-          extendedProps: {
-            type: "closure",
-            closureId: period.id,
-            date: dateStr,
-            isPublished,
-            isPendingDeletion,
-          },
-        })
-      }
-      return events
-    })
-  }, [settings.closedPeriods])
+        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+          const dateStr = formatDateLocal(d)
+          
+          // Déterminer le titre et la couleur selon le statut
+          let title = ""
+          let bgColor = ""
+          
+          if (isPendingDeletion) {
+            title = `🗑️ ${getClosureReasonText(period.reason)}`
+            bgColor = "#fce7f3" // Rose pour suppression
+          } else if (isPublished) {
+            title = `📅 ${getClosureReasonText(period.reason)}`
+            bgColor = "#fee2e2" // Rouge clair pour publié
+          } else {
+            title = `🟠 ${getClosureReasonText(period.reason)}`
+            bgColor = "#ffedd5" // Orange pour non publié
+          }
+          
+          events.push({
+            id: `closure-${period.id}-${dateStr}`,
+            title,
+            start: dateStr,
+            allDay: true,
+            display: "background",
+            backgroundColor: bgColor,
+            extendedProps: {
+              type: "closure",
+              closureId: period.id,
+              date: dateStr,
+              isPublished,
+              isPendingDeletion,
+            },
+          })
+        }
+        return events
+      })
+  }, [settings.closedPeriods, agendaMode])
 
   // Événements de résumé pour la vue mois (un par jour avec stats)
   const monthSummaryEvents = useMemo(() => {
@@ -1175,7 +1203,7 @@ export default function AdminPage() {
   }
 
   // Supprimer la fermeture pour une date
-  const removeClosureForDate = (dateStr: string) => {
+  const removeClosureForDate = async (dateStr: string) => {
     const existingPeriod = settings.closedPeriods.find(p => dateStr >= p.startDate && dateStr <= p.endDate)
     if (!existingPeriod) return
     
@@ -1189,7 +1217,8 @@ export default function AdminPage() {
       saveSettings(updatedSettings)
     } else {
       // Période multi-jours - demander confirmation
-      if (confirm(`${t('admin.closures.deleteConfirm')} "${existingPeriod.reason}" ?`)) {
+      const confirmed = await showConfirm(`${t('admin.closures.deleteConfirm')} "${existingPeriod.reason}" ?`, { variant: 'warning' })
+      if (confirmed) {
         const updatedSettings = {
           ...settings,
           closedPeriods: settings.closedPeriods.filter(p => p.id !== existingPeriod.id),
@@ -1356,7 +1385,7 @@ export default function AdminPage() {
     if (quickEdit.field === "duration") {
       const slot = slots.find(s => s.id === quickEdit.slotId)
       if (slot && checkSlotOverlap(quickEdit.slotId, slot.date, slot.time, numValue * 60)) {
-        alert(t('admin.slots.overlapError'))
+        showAlert(t('admin.slots.overlapError'), { variant: 'error' })
         return
       }
     }
@@ -1383,7 +1412,7 @@ export default function AdminPage() {
     if (quickEdit.field === "duration") {
       const slot = slots.find(s => s.id === quickEdit.slotId)
       if (slot && checkSlotOverlap(quickEdit.slotId, slot.date, slot.time, value * 60)) {
-        alert(t('admin.slots.overlapError'))
+        showAlert(t('admin.slots.overlapError'), { variant: 'error' })
         return
       }
     }
@@ -1571,7 +1600,8 @@ export default function AdminPage() {
       people: booking.numberOfPeople 
     })
     
-    if (!confirm(confirmMessage)) return
+    const confirmed = await showConfirm(confirmMessage, { variant: 'warning', title: t('admin.agenda.cancelBooking') })
+    if (!confirmed) return
     
     // Supprimer la réservation
     const updatedBookings = bookings.filter(b => b.id !== booking.id)
@@ -1879,12 +1909,12 @@ export default function AdminPage() {
     setCalendarView("timeGridWeek")
   }
 
-  const confirmAndDeleteRange = (start: Date, end: Date, label: string) => {
-    if (
-      confirm(
-        `${t('admin.slots.delete')} ${start.toLocaleDateString(i18n.language)} - ${end.toLocaleDateString(i18n.language)} (${label}) ?`,
-      )
-    ) {
+  const confirmAndDeleteRange = async (start: Date, end: Date, label: string) => {
+    const confirmed = await showConfirm(
+      `${t('admin.slots.delete')} ${start.toLocaleDateString(i18n.language)} - ${end.toLocaleDateString(i18n.language)} (${label}) ?`,
+      { variant: 'warning' }
+    )
+    if (confirmed) {
       const updatedSlots = slots.filter((slot) => {
         const slotDate = new Date(`${slot.date}T00:00:00`)
         return slotDate < start || slotDate > end
@@ -2019,20 +2049,20 @@ export default function AdminPage() {
     setTimeout(() => setPasswordSuccess(""), 3000)
   }
 
-  const handleSaveSlot = () => {
+  const handleSaveSlot = async () => {
     if (!editingSlot) return
 
     // Vérifier si la durée est valide pour ce jour
     const durationCheck = isDurationValidForDay(editingSlot.date, editingSlot.time, slotForm.duration)
     if (!durationCheck.valid) {
-      alert(durationCheck.message)
+      await showAlert(durationCheck.message || '', { variant: 'warning' })
       return
     }
 
     // Vérifier le chevauchement si la durée a changé
     if (slotForm.duration !== editingSlot.duration) {
       if (checkSlotOverlap(editingSlot.id, editingSlot.date, editingSlot.time, slotForm.duration)) {
-        alert(t('admin.slots.overlapError'))
+        await showAlert(t('admin.slots.overlapError'), { variant: 'error' })
         return
       }
     }
@@ -2044,10 +2074,10 @@ export default function AdminPage() {
     setEditingSlot(null)
   }
 
-  const handleCreateSlot = (date: string, time: string, duration = settings.defaultSlotDuration) => {
+  const handleCreateSlot = async (date: string, time: string, duration = settings.defaultSlotDuration) => {
     const enabledSports = sports.filter((s) => s.enabled)
     if (enabledSports.length === 0) {
-      alert(t('admin.slots.noSportEnabled'))
+      await showAlert(t('admin.slots.noSportEnabled'), { variant: 'warning' })
       return
     }
 
@@ -2064,7 +2094,7 @@ export default function AdminPage() {
     // Vérifier si la durée est valide pour ce jour et cette heure
     const durationCheck = isDurationValidForDay(date, time, duration)
     if (!durationCheck.valid) {
-      alert(durationCheck.message)
+      await showAlert(durationCheck.message || '', { variant: 'warning' })
       return
     }
 
@@ -2076,7 +2106,8 @@ export default function AdminPage() {
 
     // Vérifier si le jour est fermé (période de fermeture)
     if (isDateClosed(date)) {
-      if (confirm(t('admin.agenda.closedDayConfirm'))) {
+      const confirmed = await showConfirm(t('admin.agenda.closedDayConfirm'), { variant: 'question' })
+      if (confirmed) {
         removeClosureForDate(date)
       } else {
         return
@@ -2090,7 +2121,7 @@ export default function AdminPage() {
       // Vérifier que le sport sélectionné est bien activé
       const selectedSport = sports.find((s) => s.id === selectedSportFilter && s.enabled)
       if (!selectedSport) {
-        alert(t('admin.sports.notEnabled'))
+        await showAlert(t('admin.sports.notEnabled'), { variant: 'warning' })
         return
       }
       sportIdsForSlot = [selectedSportFilter]
@@ -2348,7 +2379,10 @@ export default function AdminPage() {
                     {/* Toggle Vue / Éditer */}
                     <div className="flex bg-gray-100 rounded-lg p-0.5 sm:p-1">
                       <button
-                        onClick={() => setAgendaMode("view")}
+                        onClick={() => {
+                          setAgendaMode("view")
+                          setEditMode("slot") // Réinitialiser le mode d'édition
+                        }}
                         className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-semibold transition-all ${
                           agendaMode === "view"
                             ? "bg-white text-gray-900 shadow-sm"
@@ -2465,9 +2499,10 @@ export default function AdminPage() {
                         
                         {/* Bouton Confirmer suppression */}
                         <Button
-                          onClick={() => {
+                          onClick={async () => {
                             const confirmMessage = `🗑️ ${totalPendingDeletions} ${t('admin.agenda.pendingDeletion')}.\n\n${t('admin.agenda.deleteOutsideSlots')} ?`
-                            if (confirm(confirmMessage)) {
+                            const confirmed = await showConfirm(confirmMessage, { variant: 'warning' })
+                            if (confirmed) {
                               // Supprimer les slots en attente
                               const updatedSlots = slots.filter(slot => !slot.pendingDeletion)
                               setSlots(updatedSlots)
@@ -2491,9 +2526,10 @@ export default function AdminPage() {
                     {/* Indicateur créneaux hors horaires */}
                     {outsideHoursCount > 0 && (
                       <Button
-                        onClick={() => {
+                        onClick={async () => {
                           const confirmMessage = `⚠️ ${outsideHoursCount} ${outsideHoursCount > 1 ? t('home.slot.slots') : t('home.slot.slot')} ${t('admin.settings.slotsOutsideHours')}.\n\n${t('admin.agenda.deleteOutsideSlots')} ?`
-                          if (confirm(confirmMessage)) {
+                          const confirmed = await showConfirm(confirmMessage, { variant: 'warning' })
+                          if (confirmed) {
                             const updatedSlots = slots.filter(slot => slot.outsideWorkingHours !== true)
                             setSlots(updatedSlots)
                             saveSlots(updatedSlots)
@@ -2518,21 +2554,25 @@ export default function AdminPage() {
                             setSlots(getSlots())
                             setSettingsState(getSettings())
                             
-                            // Message détaillé
-                            const parts = []
-                            if (result.published > 0) {
-                              parts.push(`${result.published} ${result.published > 1 ? t('home.slot.slots') : t('home.slot.slot')} ${t('admin.agenda.published')}`)
-                            }
-                            if (result.deleted > 0) {
-                              parts.push(`${result.deleted} ${t('admin.agenda.deleted')}`)
-                            }
-                            if (result.deletedClosures > 0) {
-                              parts.push(`${result.deletedClosures} ${t('admin.agenda.closuresPublished')}`)
+                            // Message professionnel
+                            let message = ""
+                            const hasSlots = result.published > 0
+                            const hasClosures = result.publishedClosures > 0
+                            const hasDeleted = result.deleted > 0
+                            
+                            if (hasSlots && hasClosures) {
+                              message = t('admin.agenda.publishSuccessBoth', { slots: result.published, closures: result.publishedClosures })
+                            } else if (hasSlots) {
+                              message = t('admin.agenda.publishSuccessSlots', { count: result.published })
+                            } else if (hasClosures) {
+                              message = t('admin.agenda.publishOnlyClosures', { count: result.publishedClosures })
+                            } else if (hasDeleted) {
+                              message = `${result.deleted} ${t('admin.agenda.deleted')}`
+                            } else {
+                              message = t('admin.agenda.publishNoChanges')
                             }
                             
-                            // Ajouter info synchronisation
-                            const syncStatus = result.synced ? "🔄 " + t('admin.agenda.syncedToDb') : ""
-                            alert("✅ " + (parts.join(", ") || t('admin.agenda.noChangesToPublish')) + (syncStatus ? "\n" + syncStatus : ""))
+                            await showAlert(message, { variant: 'success', title: t('admin.agenda.publishSuccess') })
                           }}
                           title={t('admin.agenda.publish')}
                           className="h-8 sm:h-11 px-2 sm:px-5 font-semibold bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg shadow-orange-500/30 animate-pulse text-xs sm:text-base"
@@ -2807,13 +2847,23 @@ export default function AdminPage() {
                     const hasSlots = dayStats && dayStats.slots > 0
                     const isToday = arg.isToday
                     
+                    // Vérifier si le jour de la semaine a des horaires d'ouverture
+                    const dayOfWeek = arg.date.getDay()
+                    const workingHour = settings.workingHours.find((wh) => wh.dayOfWeek === dayOfWeek)
+                    const hasNoWorkingHours = !workingHour || !workingHour.enabled
+                    
                     // Vider le contenu existant
                     arg.el.innerHTML = ''
                     
                     // Créer le conteneur principal
                     const container = document.createElement('div')
-                    container.className = `w-full h-full flex flex-col cursor-pointer transition-colors ${isClosed ? 'bg-red-50' : 'hover:bg-gray-50'}`
+                    const isUnavailable = isClosed || hasNoWorkingHours
+                    container.className = `w-full h-full flex flex-col cursor-pointer transition-colors ${isUnavailable ? 'bg-gray-100' : 'hover:bg-gray-50'}`
                     container.style.minHeight = '100px'
+                    if (hasNoWorkingHours && !isClosed) {
+                      // Style barré pour les jours sans horaires
+                      container.style.background = 'repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(156, 163, 175, 0.15) 10px, rgba(156, 163, 175, 0.15) 20px)'
+                    }
                     
                     // Header avec numéro du jour
                     const header = document.createElement('div')
@@ -2846,7 +2896,7 @@ export default function AdminPage() {
                     const content = document.createElement('div')
                     content.className = 'flex-1 px-2 pb-2'
                     
-                    if (hasSlots && !isClosed) {
+                    if (hasSlots && !isClosed && !hasNoWorkingHours) {
                       // Déterminer la couleur dominante selon les créneaux
                       let bgClass = 'from-blue-500 to-blue-600' // Par défaut bleu (publiés)
                       let hasWarning = false
@@ -2899,6 +2949,13 @@ export default function AdminPage() {
                       closedBox.className = 'bg-gradient-to-br from-red-500 to-red-600 rounded-lg p-2 text-xs text-white font-bold text-center shadow-sm'
                       closedBox.textContent = t('admin.agenda.closed')
                       content.appendChild(closedBox)
+                    } else if (hasNoWorkingHours) {
+                      // Jour sans horaires : juste un tiret grisé (le fond rayé est déjà appliqué)
+                      const noHoursBox = document.createElement('div')
+                      noHoursBox.className = 'border-2 border-dashed border-gray-300 rounded-lg p-2 text-xs text-gray-400 text-center flex items-center justify-center'
+                      noHoursBox.style.height = '40px'
+                      noHoursBox.textContent = '—'
+                      content.appendChild(noHoursBox)
                     } else {
                       const emptyBox = document.createElement('div')
                       emptyBox.className = 'border-2 border-dashed border-gray-200 rounded-lg p-2 text-xs text-gray-400 text-center flex items-center justify-center'
@@ -3855,7 +3912,24 @@ export default function AdminPage() {
                   </div>
 
                   {/* Changer le mot de passe */}
-                  <div className="pt-4 border-t border-gray-200">
+                  <form 
+                    className="pt-4 border-t border-gray-200"
+                    onSubmit={(e) => {
+                      e.preventDefault()
+                      handleChangePassword()
+                    }}
+                  >
+                    {/* Champ username caché pour l'accessibilité et les gestionnaires de mots de passe */}
+                    <input 
+                      type="text" 
+                      name="username" 
+                      autoComplete="username" 
+                      value="admin" 
+                      readOnly 
+                      className="sr-only" 
+                      aria-hidden="true"
+                      tabIndex={-1}
+                    />
                     <h4 className="font-medium text-gray-900 mb-4 flex items-center gap-2">
                       <Key className="w-4 h-4" /> {t('admin.settings.security.changePassword')}
                     </h4>
@@ -3871,6 +3945,7 @@ export default function AdminPage() {
                             onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
                             placeholder={t('admin.settings.security.currentPassword')}
                             className="h-11 pr-12"
+                            autoComplete="current-password"
                           />
                           <button
                             type="button"
@@ -3892,6 +3967,7 @@ export default function AdminPage() {
                             onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
                             placeholder={t('admin.settings.security.newPassword')}
                             className="h-11 pr-12"
+                            autoComplete="new-password"
                           />
                           <button
                             type="button"
@@ -3914,6 +3990,7 @@ export default function AdminPage() {
                             onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
                             placeholder={t('admin.settings.security.confirmPassword')}
                             className="h-11 pr-12"
+                            autoComplete="new-password"
                           />
                           <button
                             type="button"
@@ -3945,7 +4022,7 @@ export default function AdminPage() {
 
                       {/* Bouton de sauvegarde */}
                       <Button
-                        onClick={handleChangePassword}
+                        type="submit"
                         className="w-full h-11 bg-slate-800 hover:bg-slate-900"
                         disabled={!passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword}
                       >
@@ -3953,7 +4030,7 @@ export default function AdminPage() {
                         {t('admin.settings.security.changePassword')}
                       </Button>
                     </div>
-                  </div>
+                  </form>
                 </div>
               </Card>
 
@@ -4062,7 +4139,7 @@ export default function AdminPage() {
                             className="h-11"
                           />
                         </div>
-                        <div>
+                        <form onSubmit={(e) => e.preventDefault()}>
                           <Label className="text-sm font-medium text-gray-700 mb-2 block">🔐 {t('admin.settings.smtp.password')}</Label>
                           <div className="relative">
                             <Input
@@ -4087,6 +4164,7 @@ export default function AdminPage() {
                               }}
                               placeholder={settings.smtp?.password ? '••••••••••••' : t('admin.settings.smtp.passwordPlaceholder')}
                               className="h-11 pr-20"
+                              autoComplete="off"
                             />
                             {settings.smtp?.password && (
                               <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -4099,7 +4177,7 @@ export default function AdminPage() {
                               ? t('admin.settings.smtp.passwordSaved')
                               : t('admin.settings.smtp.passwordHint')}
                           </p>
-                        </div>
+                        </form>
                       </div>
 
                       <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
@@ -4230,7 +4308,7 @@ export default function AdminPage() {
                         <Button
                           onClick={async () => {
                             if (!settings.smtp?.host || !settings.smtp?.user || !settings.smtp?.password || !settings.smtp?.fromEmail) {
-                              alert('Veuillez remplir tous les champs de configuration SMTP')
+                              await showAlert('Veuillez remplir tous les champs de configuration SMTP', { variant: 'warning' })
                               return
                             }
                             
@@ -4390,12 +4468,12 @@ export default function AdminPage() {
                                 setTimeout(() => setSmtpTestStatus('idle'), 3000)
                               } else {
                                 setSmtpTestStatus('error')
-                                alert(`Erreur: ${data.error}`)
+                                await showAlert(`Erreur: ${data.error}`, { variant: 'error' })
                                 setTimeout(() => setSmtpTestStatus('idle'), 3000)
                               }
                             } catch (error) {
                               setSmtpTestStatus('error')
-                              alert(`Erreur: ${error instanceof Error ? error.message : 'Erreur inconnue'}`)
+                              await showAlert(`Erreur: ${error instanceof Error ? error.message : 'Erreur inconnue'}`, { variant: 'error' })
                               setTimeout(() => setSmtpTestStatus('idle'), 3000)
                             }
                           }}
@@ -4419,7 +4497,7 @@ export default function AdminPage() {
                           )}
                         </Button>
                         <p className="text-xs text-gray-500 mt-2 text-center">
-                          Un email de test sera envoyé à: {settings.smtp?.user || settings.smtp?.fromEmail || '...'}
+                          {t('admin.settings.smtp.testEmailWillBeSentTo')} {settings.smtp?.user || settings.smtp?.fromEmail || '...'}
                         </p>
                       </div>
                     </>
