@@ -11,12 +11,30 @@
 
 ## 📸 Aperçu
 
-| Client | Admin |
-|--------|-------|
-| Calendrier de réservation | Gestion des créneaux |
-| Filtrage par sport | Mode Vue / Édition |
-| Réservation en ligne | Statistiques détaillées |
-| Mobile responsive | Export PDF |
+<table>
+  <tr>
+    <th>🏠 Accueil Client</th>
+    <th>⚙️ Panel Admin</th>
+  </tr>
+  <tr>
+    <td><img src=".github/assets/home.png" alt="Vue client - Calendrier de réservation" width="400"/></td>
+    <td><img src=".github/assets/admin.png" alt="Panel admin - Gestion des créneaux" width="400"/></td>
+  </tr>
+  <tr>
+    <td>
+      • Calendrier de réservation<br>
+      • Filtrage par sport<br>
+      • Réservation en ligne<br>
+      • Mobile responsive
+    </td>
+    <td>
+      • Gestion des créneaux<br>
+      • Mode Vue / Édition<br>
+      • Statistiques détaillées<br>
+      • Export PDF
+    </td>
+  </tr>
+</table>
 
 ---
 
