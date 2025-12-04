@@ -39,6 +39,16 @@ import {
   Sparkles
 } from "lucide-react"
 
+// Fonction pour formater l'heure selon le format configuré
+const formatTimeDisplay = (time: string, timeFormat: "24h" | "12h" = "24h"): string => {
+  if (timeFormat === "24h") return time
+  
+  const [hours, minutes] = time.split(':').map(Number)
+  const period = hours >= 12 ? 'PM' : 'AM'
+  const displayHours = hours % 12 || 12
+  return `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`
+}
+
 export default function Home() {
   const { t, i18n } = useTranslation()
   const { showAlert } = useDialog()
@@ -74,6 +84,13 @@ export default function Home() {
   const [selectedDayIndex, setSelectedDayIndex] = useState(0) // Pour mobile: jour sélectionné dans la semaine
   const [swipeStart, setSwipeStart] = useState<number | null>(null) // Pour le swipe down to close
   const [swipeOffset, setSwipeOffset] = useState(0) // Offset actuel du swipe en px
+  const [weekSwipeStart, setWeekSwipeStart] = useState<number | null>(null) // Pour swipe semaine gauche/droite
+  const [weekSwipeOffset, setWeekSwipeOffset] = useState(0) // Offset horizontal en px
+  const [weekSwipeTransition, setWeekSwipeTransition] = useState(false) // Pour animer le retour
+  const [daySwipeStart, setDaySwipeStart] = useState<{ x: number, y: number } | null>(null) // Pour swipe jour
+  const [daySwipeOffset, setDaySwipeOffset] = useState(0) // Offset horizontal pour swipe jour
+  const [daySwipeTransition, setDaySwipeTransition] = useState(false) // Animation swipe jour
+  const [isHorizontalSwipe, setIsHorizontalSwipe] = useState(false) // Pour bloquer scroll vertical
 
   // Charger les données initiales (uniquement créneaux publiés pour les clients)
   const loadData = useCallback(() => {
@@ -99,6 +116,21 @@ export default function Home() {
     loadData()
     setIsLoading(false)
   }, [loadData])
+
+  // Sélectionner le premier sport par défaut quand les sports sont chargés
+  useEffect(() => {
+    if (sports.length > 0 && selectedSport === "all") {
+      setSelectedSport(sports[0].id)
+    }
+  }, [sports, selectedSport])
+
+  // Sélectionner le jour d'aujourd'hui par défaut (surtout pour mobile)
+  useEffect(() => {
+    const today = new Date()
+    const dayOfWeek = today.getDay()
+    const todayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+    setSelectedDayIndex(todayIndex)
+  }, [])
 
   // Mise à jour de l'heure actuelle (pour auto-grisage des créneaux passés) et écoute des événements locaux
   useEffect(() => {
@@ -236,8 +268,7 @@ export default function Home() {
       
       // Filtrer par sport
       if (selectedSport !== "all") {
-        const sportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
-        if (!sportIds.includes(selectedSport)) return false
+        if (slot.sportId !== selectedSport) return false
       }
       
       return true
@@ -381,13 +412,12 @@ export default function Home() {
   }
 
   const openBookingModal = (slot: TimeSlot) => {
-    const sportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
-    const availableSports = sports.filter(s => sportIds.includes(s.id))
+    // Chaque créneau a maintenant un seul sport
+    const sport = sports.find(s => s.id === slot.sportId)
+    const availableSports = sport ? [sport] : []
     
-    // Si un sport est filtré et qu'il est disponible dans le créneau, le présélectionner
-    const filteredSport = selectedSport !== "all" 
-      ? availableSports.find(s => s.id === selectedSport) 
-      : null
+    // Le sport est déjà déterminé par le créneau
+    const filteredSport = sport || null
     
     if (filteredSport) {
       // Sport filtré disponible - le présélectionner
@@ -649,7 +679,7 @@ export default function Home() {
                       </tr>
                       <tr>
                         <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #64748b; font-size: 14px;">🕐 ${t('booking.summary.time')}</td>
-                        <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; text-align: right; color: #1e293b; font-size: 15px; font-weight: 600;">${slot.time}</td>
+                        <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; text-align: right; color: #1e293b; font-size: 15px; font-weight: 600;">${formatTimeDisplay(slot.time, settings?.branding?.timeFormat || "24h")}</td>
                       </tr>
                       <tr>
                         <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #64748b; font-size: 14px;">⏱️ ${t('booking.summary.duration')}</td>
@@ -787,28 +817,28 @@ export default function Home() {
                   <td style="padding: 20px;">
                     <table width="100%" cellpadding="0" cellspacing="0">
                       <tr>
-                        <td style="color: #1e293b; font-size: 16px; font-weight: 600; padding-bottom: 15px;">📋 Booking Details</td>
+                        <td style="color: #1e293b; font-size: 16px; font-weight: 600; padding-bottom: 15px;">📋 ${t('booking.summary.details')}</td>
                       </tr>
                     </table>
                     <table width="100%" cellpadding="0" cellspacing="0">
                       <tr>
-                        <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Sport</td>
+                        <td style="padding: 8px 0; color: #64748b; font-size: 14px;">${t('booking.summary.sport')}</td>
                         <td style="padding: 8px 0; text-align: right; color: #1e293b; font-weight: 600;">${sport?.icon || '🏃'} ${newBooking.sportName}</td>
                       </tr>
                       <tr>
-                        <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Date</td>
+                        <td style="padding: 8px 0; color: #64748b; font-size: 14px;">${t('booking.summary.date')}</td>
                         <td style="padding: 8px 0; text-align: right; color: #1e293b; font-weight: 600;">${formattedDate}</td>
                       </tr>
                       <tr>
-                        <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Time</td>
-                        <td style="padding: 8px 0; text-align: right; color: #1e293b; font-weight: 600;">${slot.time}</td>
+                        <td style="padding: 8px 0; color: #64748b; font-size: 14px;">${t('booking.summary.time')}</td>
+                        <td style="padding: 8px 0; text-align: right; color: #1e293b; font-weight: 600;">${formatTimeDisplay(slot.time, settings?.branding?.timeFormat || "24h")}</td>
                       </tr>
                       <tr>
-                        <td style="padding: 8px 0; color: #64748b; font-size: 14px;">Duration</td>
+                        <td style="padding: 8px 0; color: #64748b; font-size: 14px;">${t('booking.summary.duration')}</td>
                         <td style="padding: 8px 0; text-align: right; color: #1e293b; font-weight: 600;">${slot.duration / 60}h</td>
                       </tr>
                       <tr>
-                        <td style="padding: 8px 0; color: #64748b; font-size: 14px;">People</td>
+                        <td style="padding: 8px 0; color: #64748b; font-size: 14px;">${t('booking.summary.people')}</td>
                         <td style="padding: 8px 0; text-align: right; color: #1e293b; font-weight: 600;">${newBooking.numberOfPeople}</td>
                       </tr>
                     </table>
@@ -816,7 +846,7 @@ export default function Home() {
                     <!-- Total -->
                     <table width="100%" cellpadding="0" cellspacing="0" style="margin-top: 20px; padding-top: 15px; border-top: 2px dashed #e2e8f0;">
                       <tr>
-                        <td width="50%" style="color: #64748b; font-size: 14px; vertical-align: middle;">Total</td>
+                        <td width="50%" style="color: #64748b; font-size: 14px; vertical-align: middle;">${t('booking.summary.total')}</td>
                         <td width="50%" style="text-align: right; vertical-align: middle;">
                           <span style="color: #10b981; font-size: 24px; font-weight: 700;">${newBooking.totalPrice} ${currency}</span>
                         </td>
@@ -832,7 +862,7 @@ export default function Home() {
           <tr>
             <td style="text-align: center; padding: 25px 20px;">
               <p style="color: #94a3b8; font-size: 12px; margin: 0;">
-                Automatic email from ${siteName}
+                ${t('booking.email.automaticFrom')} ${siteName}
               </p>
             </td>
           </tr>
@@ -864,8 +894,8 @@ export default function Home() {
   }
 
   const getSportForSlot = (slot: TimeSlot) => {
-    const sportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
-    return sports.filter(s => sportIds.includes(s.id))
+    const sport = sports.find(s => s.id === slot.sportId)
+    return sport ? [sport] : []
   }
 
   // Écran de chargement
@@ -973,18 +1003,6 @@ export default function Home() {
         <div className="mb-6 sm:mb-8">
           <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3 sm:mb-4">{t('home.filters.title')}</h2>
           <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap scrollbar-hide">
-            <button
-              onClick={() => setSelectedSport("all")}
-              className={`px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl font-medium transition-all flex items-center gap-2 whitespace-nowrap flex-shrink-0 ${
-                selectedSport === "all"
-                  ? "text-white shadow-lg"
-                  : "bg-white text-gray-700 border-2 border-gray-200 hover:border-gray-300"
-              }`}
-              style={selectedSport === "all" ? { backgroundColor: effectiveColor } : {}}
-            >
-              <CalendarDays className="w-4 h-4 sm:w-5 sm:h-5" />
-              <span className="text-sm sm:text-base">{t('home.filters.allSports')}</span>
-            </button>
             {sports.map((sport) => (
               <button
                 key={sport.id}
@@ -1026,9 +1044,80 @@ export default function Home() {
           <h2 className="text-sm sm:text-lg font-bold text-gray-900 text-center">{getWeekLabel()}</h2>
         </div>
 
-        {/* Mobile Day Selector - avec indicateurs visuels de disponibilité */}
-        <div className="mb-3 md:hidden">
-          <div className="grid grid-cols-7 gap-1 px-1">
+        {/* Bandeau sport sélectionné - bien visible */}
+        {(() => {
+          const currentSport = sports.find(s => s.id === selectedSport)
+          if (!currentSport) return null
+          return (
+            <div 
+              className="mb-4 p-3 sm:p-4 rounded-xl flex items-center justify-center gap-3 shadow-sm"
+              style={{ backgroundColor: `${effectiveColor}15`, borderLeft: `4px solid ${effectiveColor}` }}
+            >
+              <span className="text-2xl sm:text-3xl">{currentSport.icon}</span>
+              <p className="text-lg sm:text-xl font-bold" style={{ color: effectiveColor }}>{currentSport.name}</p>
+            </div>
+          )
+        })()}
+
+        {/* Mobile Day Selector - swipe gauche/droite pour changer de SEMAINE */}
+        <div 
+          className="mb-3 md:hidden overflow-hidden"
+          style={{ touchAction: isHorizontalSwipe ? 'none' : 'pan-y' }}
+          onTouchStart={(e) => {
+            const touch = e.touches[0]
+            setWeekSwipeStart(touch.clientX)
+            setWeekSwipeTransition(false)
+          }}
+          onTouchMove={(e) => {
+            if (weekSwipeStart === null) return
+            const currentX = e.touches[0].clientX
+            const diff = currentX - weekSwipeStart
+            
+            // Dès qu'on détecte un mouvement horizontal significatif, on bloque
+            if (Math.abs(diff) > 8) {
+              setIsHorizontalSwipe(true)
+              e.preventDefault()
+              e.stopPropagation()
+              const limitedDiff = Math.sign(diff) * Math.min(Math.abs(diff) * 0.6, 150)
+              setWeekSwipeOffset(limitedDiff)
+            }
+          }}
+          onTouchEnd={() => {
+            if (weekSwipeStart === null) return
+            
+            const threshold = 60
+            setWeekSwipeTransition(true)
+            
+            if (weekSwipeOffset > threshold) {
+              setWeekSwipeOffset(300)
+              setTimeout(() => {
+                handlePrevWeek()
+                setWeekSwipeOffset(0)
+                setWeekSwipeTransition(false)
+              }, 200)
+            } else if (weekSwipeOffset < -threshold) {
+              setWeekSwipeOffset(-300)
+              setTimeout(() => {
+                handleNextWeek()
+                setWeekSwipeOffset(0)
+                setWeekSwipeTransition(false)
+              }, 200)
+            } else {
+              setWeekSwipeOffset(0)
+            }
+            
+            setWeekSwipeStart(null)
+            setIsHorizontalSwipe(false)
+          }}
+        >
+          <div 
+            className="grid grid-cols-7 gap-1 px-1"
+            style={{
+              transform: `translateX(${weekSwipeOffset}px)`,
+              transition: weekSwipeTransition ? 'transform 0.2s ease-out' : 'none',
+              opacity: 1 - Math.abs(weekSwipeOffset) / 400,
+            }}
+          >
             {weekDates.map((date, idx) => {
               const isToday = formatDate(date) === formatDate(new Date())
               const isSelected = idx === selectedDayIndex
@@ -1186,7 +1275,7 @@ export default function Home() {
                     className="h-[80px] border-b flex items-start justify-end pr-2 pt-1"
                   >
                     <span className="text-xs font-medium text-gray-400">
-                      {String(hour).padStart(2, '0')}:00
+                      {formatTimeDisplay(`${String(hour).padStart(2, '0')}:00`, settings?.branding?.timeFormat || "24h")}
                     </span>
                   </div>
                 ))}
@@ -1236,12 +1325,19 @@ export default function Home() {
                     
                     {/* Créneaux positionnés */}
                     <div className="absolute inset-0 p-1">
-                      {daySlots.map((slot) => {
+                      {daySlots.map((slot, slotIndex) => {
                         const [slotHour, slotMin] = slot.time.split(':').map(Number)
                         const startMinutes = (slotHour - minHour) * 60 + slotMin
                         const top = (startMinutes / 60) * 80 + 2 // 80px par heure + petit offset
                         const slotHeight = (slot.duration / 60) * 80
                         const height = Math.max(slotHeight - 4, 60) // -4px pour l'espacement, min 60px
+                        
+                        // Calculer position horizontale pour créneaux au même horaire
+                        const sameTimeSlots = daySlots.filter(s => s.time === slot.time)
+                        const sameTimeIndex = sameTimeSlots.findIndex(s => s.id === slot.id)
+                        const sameTimeCount = sameTimeSlots.length
+                        const widthPercent = sameTimeCount > 1 ? 100 / sameTimeCount : 100
+                        const leftPercent = sameTimeCount > 1 ? sameTimeIndex * widthPercent : 0
                         
                         const isPassed = isSlotPassed(slot)
                         const canBook = canBookSlot(slot)
@@ -1253,7 +1349,10 @@ export default function Home() {
                         const endMinutes = slotHour * 60 + slotMin + slot.duration
                         const endHour = Math.floor(endMinutes / 60)
                         const endMin = endMinutes % 60
-                        const endTime = `${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}`
+                        const endTimeRaw = `${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}`
+                        const timeFormat = settings?.branding?.timeFormat || "24h"
+                        const startTimeFormatted = formatTimeDisplay(slot.time, timeFormat)
+                        const endTime = formatTimeDisplay(endTimeRaw, timeFormat)
                         
                         // Raison d'indisponibilité
                         const getUnavailableReason = () => {
@@ -1268,7 +1367,7 @@ export default function Home() {
                             key={slot.id}
                             onClick={() => isAvailable && openBookingModal(slot)}
                             disabled={!isAvailable}
-                            className={`absolute left-1 right-1 rounded-lg text-left transition-all overflow-hidden ${
+                            className={`absolute rounded-lg text-left transition-all overflow-hidden ${
                               isPassed
                                 ? 'bg-gray-100 border border-gray-200 opacity-50 cursor-not-allowed'
                                 : isAvailable
@@ -1278,6 +1377,8 @@ export default function Home() {
                             style={{ 
                               top: `${top}px`, 
                               height: `${height}px`,
+                              left: `calc(${leftPercent}% + 2px)`,
+                              width: `calc(${widthPercent}% - 4px)`,
                               borderColor: !isPassed && isAvailable ? effectiveColor : undefined,
                               backgroundColor: !isPassed && isAvailable ? `${effectiveColor}08` : undefined,
                             }}
@@ -1288,7 +1389,7 @@ export default function Home() {
                                 className={`text-xs font-bold mb-1 ${isPassed ? 'text-gray-400' : ''}`}
                                 style={{ color: !isPassed ? effectiveColor : undefined }}
                               >
-                                {slot.time} - {endTime}
+                                {startTimeFormatted} - {endTime}
                             </div>
                             
                               {/* Contenu - visible si assez de place */}
@@ -1354,8 +1455,80 @@ export default function Home() {
               })}
             </div>
 
-            {/* Grille horaire - MOBILE (un seul jour) - hauteur plus grande pour lisibilité */}
-            <div className="md:hidden relative" style={{ minHeight: `${hoursArray.length * 90}px` }}>
+            {/* Grille horaire - MOBILE (un seul jour) - swipe gauche/droite pour changer de JOUR */}
+            <div 
+              className="md:hidden relative overflow-hidden"
+              style={{ 
+                minHeight: `${hoursArray.length * 90}px`,
+                touchAction: isHorizontalSwipe ? 'none' : 'pan-y'
+              }}
+              onTouchStart={(e) => {
+                setDaySwipeStart({ x: e.touches[0].clientX, y: e.touches[0].clientY })
+                setDaySwipeTransition(false)
+              }}
+              onTouchMove={(e) => {
+                if (daySwipeStart === null) return
+                const currentX = e.touches[0].clientX
+                const currentY = e.touches[0].clientY
+                const diffX = currentX - daySwipeStart.x
+                const diffY = currentY - daySwipeStart.y
+                
+                // Détecter le premier mouvement significatif
+                if (!isHorizontalSwipe && (Math.abs(diffX) > 10 || Math.abs(diffY) > 10)) {
+                  // Si horizontal > vertical, c'est un swipe de navigation
+                  if (Math.abs(diffX) > Math.abs(diffY)) {
+                    setIsHorizontalSwipe(true)
+                  }
+                }
+                
+                // Si swipe horizontal détecté, bloquer tout et animer
+                if (isHorizontalSwipe) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  const limitedDiff = Math.sign(diffX) * Math.min(Math.abs(diffX) * 0.5, 120)
+                  setDaySwipeOffset(limitedDiff)
+                }
+              }}
+              onTouchEnd={() => {
+                if (daySwipeStart === null) return
+                
+                if (isHorizontalSwipe) {
+                  const threshold = 50
+                  setDaySwipeTransition(true)
+                  
+                  if (daySwipeOffset > threshold) {
+                    setDaySwipeOffset(200)
+                    setTimeout(() => {
+                      if (selectedDayIndex > 0) {
+                        setSelectedDayIndex(selectedDayIndex - 1)
+                      } else {
+                        handlePrevWeek()
+                        setSelectedDayIndex(6)
+                      }
+                      setDaySwipeOffset(0)
+                      setDaySwipeTransition(false)
+                    }, 150)
+                  } else if (daySwipeOffset < -threshold) {
+                    setDaySwipeOffset(-200)
+                    setTimeout(() => {
+                      if (selectedDayIndex < 6) {
+                        setSelectedDayIndex(selectedDayIndex + 1)
+                      } else {
+                        handleNextWeek()
+                        setSelectedDayIndex(0)
+                      }
+                      setDaySwipeOffset(0)
+                      setDaySwipeTransition(false)
+                    }, 150)
+                  } else {
+                    setDaySwipeOffset(0)
+                  }
+                }
+                
+                setDaySwipeStart(null)
+                setIsHorizontalSwipe(false)
+              }}
+            >
               {(() => {
                 const date = weekDates[selectedDayIndex]
                 const daySlots = getSlotsForDate(date)
@@ -1367,15 +1540,20 @@ export default function Home() {
                 return (
                   <div 
                     className="grid grid-cols-[45px_1fr] relative"
-                    style={isUnavailable ? {
-                      background: `repeating-linear-gradient(
-                        -45deg,
-                        #f9fafb,
-                        #f9fafb 10px,
-                        #f3f4f6 10px,
-                        #f3f4f6 20px
-                      )`
-                    } : {}}
+                    style={{
+                      transform: `translateX(${daySwipeOffset}px)`,
+                      transition: daySwipeTransition ? 'transform 0.15s ease-out' : 'none',
+                      opacity: 1 - Math.abs(daySwipeOffset) / 300,
+                      ...(isUnavailable ? {
+                        background: `repeating-linear-gradient(
+                          -45deg,
+                          #f9fafb,
+                          #f9fafb 10px,
+                          #f3f4f6 10px,
+                          #f3f4f6 20px
+                        )`
+                      } : {})
+                    }}
                   >
                     {/* Colonne des heures */}
                     <div className="border-r bg-gray-50/50">
@@ -1385,7 +1563,9 @@ export default function Home() {
                           className="h-[90px] border-b flex items-start justify-end pr-1.5 pt-1"
                         >
                           <span className="text-[10px] font-medium text-gray-400">
-                            {String(hour).padStart(2, '0')}h
+                            {settings?.branding?.timeFormat === "12h" 
+                              ? formatTimeDisplay(`${String(hour).padStart(2, '0')}:00`, "12h").replace(':00', '')
+                              : `${String(hour).padStart(2, '0')}h`}
                           </span>
                         </div>
                       ))}
@@ -1414,12 +1594,19 @@ export default function Home() {
                       
                       {/* Créneaux positionnés */}
                       <div className="absolute inset-0 p-1">
-                        {daySlots.map((slot) => {
+                        {daySlots.map((slot, slotIndex) => {
                           const [slotHour, slotMin] = slot.time.split(':').map(Number)
                           const startMinutes = (slotHour - minHour) * 60 + slotMin
                           const top = (startMinutes / 60) * 90 + 2
                           const slotHeight = (slot.duration / 60) * 90
                           const height = Math.max(slotHeight - 4, 75)
+                          
+                          // Calculer position horizontale pour créneaux au même horaire
+                          const sameTimeSlots = daySlots.filter(s => s.time === slot.time)
+                          const sameTimeIndex = sameTimeSlots.findIndex(s => s.id === slot.id)
+                          const sameTimeCount = sameTimeSlots.length
+                          const widthPercent = sameTimeCount > 1 ? 100 / sameTimeCount : 100
+                          const leftPercent = sameTimeCount > 1 ? sameTimeIndex * widthPercent : 0
                           
                           const isPassed = isSlotPassed(slot)
                           const canBook = canBookSlot(slot)
@@ -1430,7 +1617,10 @@ export default function Home() {
                           const endMinutes = slotHour * 60 + slotMin + slot.duration
                           const endHour = Math.floor(endMinutes / 60)
                           const endMin = endMinutes % 60
-                          const endTime = `${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}`
+                          const endTimeRaw = `${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}`
+                          const timeFormat = settings?.branding?.timeFormat || "24h"
+                          const startTimeFormatted = formatTimeDisplay(slot.time, timeFormat)
+                          const endTime = formatTimeDisplay(endTimeRaw, timeFormat)
                           
                           const getUnavailableReason = () => {
                             if (isPassed) return t('home.slot.passed')
@@ -1444,7 +1634,7 @@ export default function Home() {
                               key={slot.id}
                               onClick={() => isAvailable && openBookingModal(slot)}
                               disabled={!isAvailable}
-                              className={`absolute left-1 right-1 rounded-lg text-left transition-all overflow-hidden ${
+                              className={`absolute rounded-lg text-left transition-all overflow-hidden ${
                                 isPassed
                                   ? 'bg-gray-100 border border-gray-200 opacity-50 cursor-not-allowed'
                                   : isAvailable
@@ -1454,6 +1644,8 @@ export default function Home() {
                               style={{ 
                                 top: `${top}px`, 
                                 height: `${height}px`,
+                                left: `calc(${leftPercent}% + 2px)`,
+                                width: `calc(${widthPercent}% - 4px)`,
                                 borderColor: !isPassed && isAvailable ? effectiveColor : undefined,
                                 backgroundColor: !isPassed && isAvailable ? `${effectiveColor}08` : undefined,
                               }}
@@ -1463,7 +1655,7 @@ export default function Home() {
                                   className={`text-xs font-bold ${isPassed ? 'text-gray-400' : ''}`}
                                   style={{ color: !isPassed ? effectiveColor : undefined }}
                                 >
-                                  {slot.time} - {endTime}
+                                  {startTimeFormatted} - {endTime}
                   </div>
                                 
                                 <div className="flex items-center gap-1 mt-1">
@@ -1668,7 +1860,7 @@ export default function Home() {
                     </div>
                     <div className="flex items-center gap-2 bg-white/20 px-3 py-1.5 rounded-lg">
                       <Clock className="w-4 h-4" />
-                      {bookingModal.slot.time} ({bookingModal.slot.duration / 60}h)
+                      {formatTimeDisplay(bookingModal.slot.time, settings?.branding?.timeFormat || "24h")} ({bookingModal.slot.duration / 60}h)
                     </div>
                   </div>
                 </>
@@ -1702,7 +1894,7 @@ export default function Home() {
                     </div>
                     <div className="flex items-center gap-2 bg-white/20 px-3 py-1.5 rounded-lg">
                       <Clock className="w-4 h-4" />
-                      {bookingModal.slot.time} ({bookingModal.slot.duration / 60}h)
+                      {formatTimeDisplay(bookingModal.slot.time, settings?.branding?.timeFormat || "24h")} ({bookingModal.slot.duration / 60}h)
                     </div>
                   </div>
                 </>
@@ -1756,7 +1948,7 @@ export default function Home() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-500">{t('booking.summary.time')}</span>
-                        <span className="font-medium">{bookingModal.slot.time}</span>
+                        <span className="font-medium">{formatTimeDisplay(bookingModal.slot.time, settings?.branding?.timeFormat || "24h")}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-500">{t('booking.summary.people')}</span>

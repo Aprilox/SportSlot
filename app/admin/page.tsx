@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import { useTranslation } from "react-i18next"
+import jsPDF from "jspdf"
+import autoTable from "jspdf-autotable"
 import LanguageSwitcher from "@/components/LanguageSwitcher"
 import { SUPPORTED_LANGUAGES } from "@/lib/i18n"
 import type {
@@ -69,6 +71,14 @@ import {
   Move,
   ZoomIn,
   ZoomOut,
+  BarChart3,
+  TrendingUp,
+  PieChart,
+  Clock,
+  RefreshCw,
+  Download,
+  UserCheck,
+  Target,
 } from "lucide-react"
 import {
   isAuthenticated,
@@ -127,15 +137,39 @@ export default function AdminPage() {
     currentEnd: Date
   } | null>(null)
   const [selectedSportFilter, setSelectedSportFilter] = useState<string>("all")
+  
+  // États pour la vue mobile de l'agenda
+  const [isMobileAgendaView, setIsMobileAgendaView] = useState(false)
+  const [selectedDayIndex, setSelectedDayIndex] = useState(0) // 0 = premier jour de la semaine affichée
+  const [mobileTargetDate, setMobileTargetDate] = useState<Date | null>(null) // Date cible pour navigation mobile
+  // Swipe jours (sur la zone du calendrier)
+  const [mobileDaySwipeStart, setMobileDaySwipeStart] = useState<number | null>(null)
+  const [mobileDaySwipeOffset, setMobileDaySwipeOffset] = useState(0)
+  const [isMobileDaySwiping, setIsMobileDaySwiping] = useState(false)
+  // Swipe semaines (sur la barre des dates)
+  const [mobileWeekSwipeStart, setMobileWeekSwipeStart] = useState<number | null>(null)
+  const [mobileWeekSwipeOffset, setMobileWeekSwipeOffset] = useState(0)
+  const [isMobileWeekSwiping, setIsMobileWeekSwiping] = useState(false)
 
   const [editingSlot, setEditingSlot] = useState<TimeSlot | null>(null)
   const [isSlotDialogOpen, setIsSlotDialogOpen] = useState(false)
   const [slotForm, setSlotForm] = useState({
-    sportIds: [] as string[],
+    sportId: "" as string,
     maxCapacity: 4,
     price: 50,
     duration: 60,
   })
+  
+  // Dialog de création de créneau (choix des sports)
+  const [createSlotDialog, setCreateSlotDialog] = useState<{
+    isOpen: boolean
+    date: string
+    time: string
+    duration: number
+    price: number
+    maxCapacity: number
+    selectedSports: string[]
+  }>({ isOpen: false, date: '', time: '', duration: 60, price: 50, maxCapacity: 4, selectedSports: [] })
 
   const [activeTab, setActiveTab] = useState("agenda")
   
@@ -183,6 +217,47 @@ export default function AdminPage() {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [imageNaturalSize, setImageNaturalSize] = useState({ width: 0, height: 0 })
   const [logoUrlInput, setLogoUrlInput] = useState("")
+  
+  // États pour l'onglet Statistiques
+  const [statsSportFilter, setStatsSportFilter] = useState<string>("all")
+  const [statsPeriod, setStatsPeriod] = useState<string>("thisMonth")
+  // États locaux pour les inputs de date (évite le freeze pendant la saisie)
+  const [statsCustomDateStartInput, setStatsCustomDateStartInput] = useState<string>("")
+  const [statsCustomDateEndInput, setStatsCustomDateEndInput] = useState<string>("")
+  // États validés pour les calculs (mis à jour après debounce)
+  const [statsCustomDateStart, setStatsCustomDateStart] = useState<string>("")
+  const [statsCustomDateEnd, setStatsCustomDateEnd] = useState<string>("")
+  const [statsChartType, setStatsChartType] = useState<"revenue" | "bookings">("revenue")
+  
+  // États pour la popup d'export PDF
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false)
+  const [exportOptions, setExportOptions] = useState({
+    mode: "summary" as "summary" | "detailed",
+    period: "current" as "current" | "custom",
+    customStartDate: "",
+    customEndDate: "",
+    includeSportFilter: true,
+  })
+  
+  // Debounce pour les dates personnalisées (évite le freeze)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // Valider le format avant de mettre à jour
+      if (/^\d{4}-\d{2}-\d{2}$/.test(statsCustomDateStartInput) || statsCustomDateStartInput === "") {
+        setStatsCustomDateStart(statsCustomDateStartInput)
+      }
+    }, 500) // 500ms de délai
+    return () => clearTimeout(timer)
+  }, [statsCustomDateStartInput])
+  
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(statsCustomDateEndInput) || statsCustomDateEndInput === "") {
+        setStatsCustomDateEnd(statsCustomDateEndInput)
+      }
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [statsCustomDateEndInput])
   const [isLoadingLogoUrl, setIsLoadingLogoUrl] = useState(false)
   const logoFileInputRef = useRef<HTMLInputElement>(null)
   const cropperRef = useRef<HTMLDivElement>(null)
@@ -250,6 +325,7 @@ export default function AdminPage() {
             currency: "CHF",
             currencySymbol: ".-",
             defaultLanguage: "fr",
+            timeFormat: "24h" as const,
             contactEmail: "",
             contactPhone: "",
             address: "",
@@ -361,6 +437,41 @@ export default function AdminPage() {
     return () => clearTimeout(timer)
   }, [notifications])
 
+  // Auto-sélectionner le premier sport si "all" n'est plus disponible (> 2 sports)
+  useEffect(() => {
+    const enabledSports = sports.filter(s => s.enabled)
+    const showAllOption = enabledSports.length <= 2
+    
+    if (!showAllOption && selectedSportFilter === "all" && enabledSports.length > 0) {
+      setSelectedSportFilter(enabledSports[0].id)
+    }
+  }, [sports, selectedSportFilter])
+
+  // Détecter si on est sur mobile pour l'agenda (< 640px)
+  useEffect(() => {
+    const checkMobile = () => {
+      const isMobile = window.innerWidth < 640
+      setIsMobileAgendaView(isMobile)
+      // Initialiser le jour sélectionné sur aujourd'hui si on passe en mobile
+      if (isMobile) {
+        const today = new Date()
+        const startOfWeek = new Date(calendarDate)
+        const day = startOfWeek.getDay()
+        const diff = day === 0 ? -6 : 1 - day
+        startOfWeek.setDate(startOfWeek.getDate() + diff)
+        
+        // Calculer l'index du jour actuel par rapport au lundi
+        const todayIndex = Math.floor((today.getTime() - startOfWeek.getTime()) / (1000 * 60 * 60 * 24))
+        if (todayIndex >= 0 && todayIndex < 7) {
+          setSelectedDayIndex(todayIndex)
+        }
+      }
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [calendarDate])
+
   const [sportForm, setSportForm] = useState({
     name: "",
     icon: "⚽",
@@ -402,6 +513,11 @@ export default function AdminPage() {
 
   // Ouvrir le dialog de génération avec les valeurs par défaut
   const openGenerateDialog = () => {
+    // Passer automatiquement en mode Éditer si on est en mode Vue
+    if (agendaMode === "view") {
+      setAgendaMode("edit")
+    }
+    
     const today = new Date()
     const nextWeek = new Date()
     nextWeek.setDate(today.getDate() + 7)
@@ -466,7 +582,7 @@ export default function AdminPage() {
         lunchEndMinutes = lunchEndH * 60 + lunchEndM
       }
 
-      // Créer un créneau par slot de temps (pas par sport)
+      // Créer un créneau par sport et par slot de temps
       for (let time = dayStartMinutes; time + generateForm.duration <= dayEndMinutes; time += generateForm.duration) {
         // Vérifier si le créneau est pendant la pause midi
         if (generateForm.hasLunchBreak) {
@@ -481,22 +597,24 @@ export default function AdminPage() {
         const mins = time % 60
         const timeStr = `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`
 
-        // Vérifier si un créneau existe déjà à cette heure
-        const exists = slots.some((s) => s.date === dateStr && s.time === timeStr)
+        // Créer un créneau pour chaque sport sélectionné
+        for (const sportId of generateForm.sportIds) {
+          // Vérifier si un créneau existe déjà à cette heure pour ce sport
+          const exists = slots.some((s) => s.date === dateStr && s.time === timeStr && s.sportId === sportId)
 
-        if (!exists) {
-          newSlots.push({
-            id: `${Date.now()}-${Math.random()}`,
-            sportId: generateForm.sportIds[0], // Legacy
-            sportIds: generateForm.sportIds,
-            date: dateStr,
-            time: timeStr,
-            duration: generateForm.duration,
-            maxCapacity: generateForm.maxCapacity,
-            currentBookings: 0,
-            price: generateForm.price,
-            published: false, // Nouveau créneau = brouillon (orange)
-          })
+          if (!exists) {
+            newSlots.push({
+              id: `${Date.now()}-${Math.random()}-${sportId}`,
+              sportId: sportId,
+              date: dateStr,
+              time: timeStr,
+              duration: generateForm.duration,
+              maxCapacity: generateForm.maxCapacity,
+              currentBookings: 0,
+              price: generateForm.price,
+              published: false, // Nouveau créneau = brouillon (orange)
+            })
+          }
         }
       }
     }
@@ -549,35 +667,15 @@ export default function AdminPage() {
     const sportToDelete = sports.find(s => s.id === sportId)
     if (!sportToDelete) return
 
-    // Trouver tous les créneaux qui utilisent ce sport
-    const affectedSlots = slots.filter(slot => {
-      const slotSportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
-      return slotSportIds.includes(sportId)
-    })
-
-    // Créneaux qui n'ont QUE ce sport (seront supprimés)
-    const slotsToDelete = affectedSlots.filter(slot => {
-      const slotSportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
-      return slotSportIds.length === 1
-    })
-
-    // Créneaux qui ont plusieurs sports (le sport sera retiré)
-    const slotsToUpdate = affectedSlots.filter(slot => {
-      const slotSportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
-      return slotSportIds.length > 1
-    })
+    // Trouver tous les créneaux qui utilisent ce sport (seront tous supprimés)
+    const affectedSlots = slots.filter(slot => slot.sportId === sportId)
 
     // Message de confirmation détaillé
     let confirmMessage = `${t('admin.sports.deleteConfirm')}\n\n"${sportToDelete.name}" ${sportToDelete.icon}\n`
     
     if (affectedSlots.length > 0) {
       confirmMessage += `\n⚠️ ${t('admin.sports.deleteWarning') || 'Attention'} :\n`
-      if (slotsToDelete.length > 0) {
-        confirmMessage += `• ${slotsToDelete.length} ${slotsToDelete.length > 1 ? t('home.slot.slots') : t('home.slot.slot')} ${t('admin.sports.willBeDeleted') || 'seront supprimés'}\n`
-      }
-      if (slotsToUpdate.length > 0) {
-        confirmMessage += `• ${slotsToUpdate.length} ${slotsToUpdate.length > 1 ? t('home.slot.slots') : t('home.slot.slot')} ${t('admin.sports.willBeUpdated') || 'seront mis à jour'}\n`
-      }
+      confirmMessage += `• ${affectedSlots.length} ${affectedSlots.length > 1 ? t('home.slot.slots') : t('home.slot.slot')} ${t('admin.sports.willBeDeleted') || 'seront supprimés'}\n`
     }
 
     const confirmed = await showConfirm(confirmMessage, { variant: 'warning', title: t('admin.sports.delete') })
@@ -586,28 +684,8 @@ export default function AdminPage() {
       const updatedSports = sports.filter((s) => s.id !== sportId)
       setSports(updatedSports)
 
-      // Mettre à jour les créneaux
-      const updatedSlots = slots
-        // Filtrer les créneaux à supprimer (ceux qui n'ont que ce sport)
-        .filter(slot => {
-          const slotSportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
-          if (slotSportIds.includes(sportId) && slotSportIds.length === 1) {
-            return false // Supprimer ce créneau
-          }
-          return true
-        })
-        // Retirer le sport des créneaux multi-sports
-        .map(slot => {
-          const slotSportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
-          if (slotSportIds.includes(sportId)) {
-            return {
-              ...slot,
-              sportIds: slotSportIds.filter(id => id !== sportId),
-              sportId: undefined
-            }
-          }
-          return slot
-        })
+      // Supprimer tous les créneaux de ce sport
+      const updatedSlots = slots.filter(slot => slot.sportId !== sportId)
 
       setSlots(updatedSlots)
       
@@ -780,7 +858,17 @@ export default function AdminPage() {
     return sport ? sport.icon : "⚽"
   }
 
-  // Updated to handle multi-sport slots with disabled state
+  // Get sport info with optional disabled state
+  const getSportInfo = (sportId: string, withDisabledState = false) => {
+    const sport = sports.find((s) => s.id === sportId)
+    if (!sport) return { icon: "❓", name: "?", disabled: false }
+    if (withDisabledState) {
+      return { icon: sport.icon, name: sport.name, disabled: !sport.enabled }
+    }
+    return { icon: sport.icon, name: sport.name, disabled: false }
+  }
+
+  // Legacy helper for backwards compatibility
   const getSportIcons = (sportIds: string[], withDisabledState = false) => {
     return sportIds.map((id) => {
       const sport = sports.find((s) => s.id === id)
@@ -816,6 +904,82 @@ export default function AdminPage() {
     
     return { start, end }
   }, [calendarDate, calendarView])
+
+  // Calculer les 7 jours de la semaine pour la navigation mobile
+  const weekDays = useMemo(() => {
+    const days: { date: Date; dayName: string; dayNumber: number; isToday: boolean }[] = []
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    
+    const startOfWeek = new Date(calendarDate)
+    const day = startOfWeek.getDay()
+    const diff = day === 0 ? -6 : 1 - day
+    startOfWeek.setDate(startOfWeek.getDate() + diff)
+    startOfWeek.setHours(0, 0, 0, 0)
+    
+    const dayNames = [
+      t('admin.agenda.statsPage.days.mon'),
+      t('admin.agenda.statsPage.days.tue'),
+      t('admin.agenda.statsPage.days.wed'),
+      t('admin.agenda.statsPage.days.thu'),
+      t('admin.agenda.statsPage.days.fri'),
+      t('admin.agenda.statsPage.days.sat'),
+      t('admin.agenda.statsPage.days.sun')
+    ]
+    
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(startOfWeek)
+      d.setDate(startOfWeek.getDate() + i)
+      days.push({
+        date: d,
+        dayName: dayNames[i],
+        dayNumber: d.getDate(),
+        isToday: d.getTime() === today.getTime()
+      })
+    }
+    
+    return days
+  }, [calendarDate, t])
+
+  // Synchroniser selectedDayIndex quand mobileTargetDate change
+  useEffect(() => {
+    if (mobileTargetDate && weekDays.length === 7) {
+      const targetTime = mobileTargetDate.getTime()
+      const foundIndex = weekDays.findIndex(day => {
+        const dayTime = new Date(day.date).setHours(12, 0, 0, 0)
+        const targetNormalized = new Date(mobileTargetDate).setHours(12, 0, 0, 0)
+        return dayTime === targetNormalized
+      })
+      if (foundIndex !== -1) {
+        setSelectedDayIndex(foundIndex)
+      }
+      setMobileTargetDate(null) // Réinitialiser après synchronisation
+    }
+  }, [mobileTargetDate, weekDays])
+
+  // Date du jour sélectionné pour la vue mobile
+  const mobileSelectedDate = useMemo(() => {
+    if (weekDays.length > 0 && selectedDayIndex >= 0 && selectedDayIndex < 7) {
+      return weekDays[selectedDayIndex].date
+    }
+    return calendarDate
+  }, [weekDays, selectedDayIndex, calendarDate])
+
+  // Vue du calendrier (mobile = jour unique, desktop = semaine/mois)
+  const effectiveCalendarView = useMemo(() => {
+    if (isMobileAgendaView && calendarView === "timeGridWeek") {
+      return "timeGridDay"
+    }
+    return calendarView
+  }, [isMobileAgendaView, calendarView])
+
+  // Date effective du calendrier (mobile = jour sélectionné)
+  const effectiveCalendarDate = useMemo(() => {
+    if (isMobileAgendaView && calendarView === "timeGridWeek") {
+      return mobileSelectedDate
+    }
+    return calendarDate
+  }, [isMobileAgendaView, calendarView, mobileSelectedDate, calendarDate])
 
   // Filtrer les créneaux de la période affichée
   const periodSlots = useMemo(() => {
@@ -888,7 +1052,8 @@ export default function AdminPage() {
       slots: number; 
       hours: number; 
       revenue: number; 
-      bookings: number; 
+      bookings: number;
+      capacity: number; 
       hasClosure: boolean;
       unpublished: number; // Créneaux non publiés (orange)
       outsideHours: number; // Créneaux hors horaires (rouge)
@@ -897,7 +1062,7 @@ export default function AdminPage() {
     
     slots.forEach((slot) => {
       const existing = statsMap.get(slot.date) || { 
-        slots: 0, hours: 0, revenue: 0, bookings: 0, hasClosure: false,
+        slots: 0, hours: 0, revenue: 0, bookings: 0, capacity: 0, hasClosure: false,
         unpublished: 0, outsideHours: 0, published: 0
       }
       
@@ -919,6 +1084,7 @@ export default function AdminPage() {
         hours: existing.hours + slot.duration / 60,
         revenue: existing.revenue + slot.price * slot.currentBookings,
         bookings: existing.bookings + slot.currentBookings,
+        capacity: existing.capacity + slot.maxCapacity,
         hasClosure: existing.hasClosure,
         unpublished,
         outsideHours,
@@ -933,7 +1099,7 @@ export default function AdminPage() {
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         const dateStr = formatDateLocal(d)
         const existing = statsMap.get(dateStr) || { 
-          slots: 0, hours: 0, revenue: 0, bookings: 0, hasClosure: false,
+          slots: 0, hours: 0, revenue: 0, bookings: 0, capacity: 0, hasClosure: false,
           unpublished: 0, outsideHours: 0, published: 0
         }
         statsMap.set(dateStr, { ...existing, hasClosure: true })
@@ -942,6 +1108,659 @@ export default function AdminPage() {
     
     return statsMap
   }, [slots, settings.closedPeriods])
+
+  // Statistiques détaillées pour l'onglet Stats
+  const detailedStats = useMemo(() => {
+    // Calculer les dates de début et fin selon la période sélectionnée
+    const now = new Date()
+    let startDate: Date
+    let endDate: Date = new Date(now)
+    
+    switch (statsPeriod) {
+      case "thisWeek":
+        startDate = new Date(now)
+        startDate.setDate(now.getDate() - now.getDay() + 1) // Lundi
+        endDate.setDate(startDate.getDate() + 6) // Dimanche
+        break
+      case "lastWeek":
+        startDate = new Date(now)
+        startDate.setDate(now.getDate() - now.getDay() - 6) // Lundi semaine dernière
+        endDate = new Date(startDate)
+        endDate.setDate(startDate.getDate() + 6)
+        break
+      case "thisMonth":
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1)
+        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+        break
+      case "lastMonth":
+        startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+        endDate = new Date(now.getFullYear(), now.getMonth(), 0)
+        break
+      case "thisYear":
+        startDate = new Date(now.getFullYear(), 0, 1)
+        endDate = new Date(now.getFullYear(), 11, 31)
+        break
+      case "last30Days":
+        startDate = new Date(now)
+        startDate.setDate(now.getDate() - 30)
+        break
+      case "last90Days":
+        startDate = new Date(now)
+        startDate.setDate(now.getDate() - 90)
+        break
+      case "custom":
+        // Valider les dates pour éviter le freeze pendant la saisie
+        const isValidStart = statsCustomDateStart && /^\d{4}-\d{2}-\d{2}$/.test(statsCustomDateStart)
+        const isValidEnd = statsCustomDateEnd && /^\d{4}-\d{2}-\d{2}$/.test(statsCustomDateEnd)
+        startDate = isValidStart ? new Date(statsCustomDateStart) : new Date(now.getFullYear(), now.getMonth(), 1)
+        endDate = isValidEnd ? new Date(statsCustomDateEnd) : now
+        // Vérifier que les dates sont valides (pas NaN)
+        if (isNaN(startDate.getTime())) startDate = new Date(now.getFullYear(), now.getMonth(), 1)
+        if (isNaN(endDate.getTime())) endDate = now
+        break
+      default:
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1)
+    }
+    startDate.setHours(0, 0, 0, 0)
+    endDate.setHours(23, 59, 59, 999)
+
+    // Filtrer les créneaux par période et sport
+    const filteredSlots = slots.filter(slot => {
+      const slotDate = new Date(slot.date + "T12:00:00")
+      if (slotDate < startDate || slotDate > endDate) return false
+      if (statsSportFilter !== "all" && slot.sportId !== statsSportFilter) return false
+      return true
+    })
+
+    // Filtrer les réservations par période et sport
+    // Utiliser les données de la réservation directement (pas du slot qui peut être supprimé)
+    const filteredBookings = bookings.filter(booking => {
+      // Utiliser booking.date directement (snapshot au moment de la réservation)
+      const bookingDate = booking.date ? new Date(booking.date + "T12:00:00") : null
+      if (!bookingDate) {
+        // Fallback: essayer de trouver le slot
+        const slot = slots.find(s => s.id === booking.slotId)
+        if (!slot) return false
+        const slotDate = new Date(slot.date + "T12:00:00")
+        if (slotDate < startDate || slotDate > endDate) return false
+        if (statsSportFilter !== "all" && slot.sportId !== statsSportFilter) return false
+        return true
+      }
+      if (bookingDate < startDate || bookingDate > endDate) return false
+      // Utiliser booking.sportId directement
+      if (statsSportFilter !== "all" && booking.sportId !== statsSportFilter) return false
+      return true
+    })
+
+    // KPIs - utiliser totalPrice de la réservation directement
+    const totalRevenue = filteredBookings.reduce((acc, b) => {
+      // Utiliser le totalPrice stocké dans la réservation
+      return acc + (b.totalPrice || 0)
+    }, 0)
+    const totalBookings = filteredBookings.length
+    const uniqueClients = new Set(filteredBookings.map(b => (b.customerEmail || '').toLowerCase())).size
+    const totalPeople = filteredBookings.reduce((acc, b) => acc + (b.numberOfPeople || 0), 0)
+    const totalSlots = filteredSlots.length
+    const bookedSlots = filteredSlots.filter(s => s.currentBookings > 0).length
+    const occupancyRate = totalSlots > 0 ? Math.round((bookedSlots / totalSlots) * 100) : 0
+    const avgPerBooking = totalBookings > 0 ? Math.round(totalRevenue / totalBookings) : 0
+
+    // Données par jour pour le graphique
+    const revenueByDay: { date: string; value: number; label: string }[] = []
+    const bookingsByDay: { date: string; value: number; label: string }[] = []
+    const currentDate = new Date(startDate)
+    while (currentDate <= endDate) {
+      const dateStr = formatDateLocal(currentDate)
+      const dayBookings = filteredBookings.filter(b => {
+        // Utiliser booking.date directement
+        return b.date === dateStr
+      })
+      const dayRevenue = dayBookings.reduce((acc, b) => {
+        // Utiliser totalPrice de la réservation
+        return acc + (b.totalPrice || 0)
+      }, 0)
+      
+      revenueByDay.push({
+        date: dateStr,
+        value: dayRevenue,
+        label: currentDate.toLocaleDateString(i18n.language, { day: 'numeric', month: 'short' })
+      })
+      bookingsByDay.push({
+        date: dateStr,
+        value: dayBookings.length,
+        label: currentDate.toLocaleDateString(i18n.language, { day: 'numeric', month: 'short' })
+      })
+      currentDate.setDate(currentDate.getDate() + 1)
+    }
+
+    // Répartition par sport
+    const bySport: { sportId: string; name: string; icon: string; revenue: number; bookings: number; percentage: number }[] = []
+    const enabledSportsForStats = sports.filter(s => s.enabled)
+    enabledSportsForStats.forEach(sport => {
+      const sportBookings = filteredBookings.filter(b => {
+        // Utiliser booking.sportId directement
+        return b.sportId === sport.id
+      })
+      const sportRevenue = sportBookings.reduce((acc, b) => {
+        // Utiliser totalPrice de la réservation
+        return acc + (b.totalPrice || 0)
+      }, 0)
+      if (sportBookings.length > 0 || statsSportFilter === "all") {
+        bySport.push({
+          sportId: sport.id,
+          name: sport.name,
+          icon: sport.icon,
+          revenue: sportRevenue,
+          bookings: sportBookings.length,
+          percentage: totalRevenue > 0 ? Math.round((sportRevenue / totalRevenue) * 100) : 0
+        })
+      }
+    })
+
+    // Heures populaires (0-23)
+    const byHour: { hour: number; bookings: number; revenue: number }[] = Array(24).fill(null).map((_, i) => ({
+      hour: i,
+      bookings: 0,
+      revenue: 0
+    }))
+    filteredBookings.forEach(booking => {
+      // Utiliser booking.time directement
+      if (booking.time) {
+        const hour = parseInt(booking.time.split(':')[0])
+        if (hour >= 0 && hour < 24) {
+          byHour[hour].bookings++
+          byHour[hour].revenue += booking.totalPrice || 0
+        }
+      }
+    })
+
+    // Jours de la semaine (0=Dim, 1=Lun, ..., 6=Sam)
+    const byDayOfWeek: { day: number; bookings: number; revenue: number }[] = Array(7).fill(null).map((_, i) => ({
+      day: i,
+      bookings: 0,
+      revenue: 0
+    }))
+    filteredBookings.forEach(booking => {
+      // Utiliser booking.date directement
+      if (booking.date) {
+        const dayOfWeek = new Date(booking.date + "T12:00:00").getDay()
+        byDayOfWeek[dayOfWeek].bookings++
+        byDayOfWeek[dayOfWeek].revenue += booking.totalPrice || 0
+      }
+    })
+
+    // Top créneaux
+    const topSlots = filteredSlots
+      .filter(s => s.currentBookings > 0)
+      .sort((a, b) => b.currentBookings - a.currentBookings)
+      .slice(0, 10)
+      .map(slot => {
+        const sport = sports.find(s => s.id === slot.sportId)
+        return {
+          ...slot,
+          sportName: sport?.name || 'Unknown',
+          sportIcon: sport?.icon || '❓',
+          totalRevenue: slot.price * slot.currentBookings
+        }
+      })
+
+    // Réservations récentes
+    const recentBookings = filteredBookings
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 10)
+      .map(booking => {
+        const slot = slots.find(s => s.id === booking.slotId)
+        // Utiliser les données de la réservation directement (elles contiennent un snapshot)
+        const sport = sports.find(s => s.id === booking.sportId)
+        return {
+          ...booking,
+          slot: slot || { date: booking.date, time: booking.time, price: booking.totalPrice / (booking.numberOfPeople || 1) },
+          sportName: booking.sportName || sport?.name || 'Unknown',
+          sportIcon: sport?.icon || '❓'
+        }
+      })
+
+    return {
+      startDate,
+      endDate,
+      kpis: {
+        totalRevenue,
+        totalBookings,
+        uniqueClients,
+        totalPeople,
+        totalSlots,
+        bookedSlots,
+        occupancyRate,
+        avgPerBooking
+      },
+      charts: {
+        revenueByDay,
+        bookingsByDay,
+        bySport,
+        byHour,
+        byDayOfWeek
+      },
+      tables: {
+        topSlots,
+        recentBookings
+      }
+    }
+  }, [slots, bookings, sports, statsSportFilter, statsPeriod, statsCustomDateStart, statsCustomDateEnd, i18n.language])
+
+  // Fonction pour charger une image en base64
+  const loadImageAsBase64 = (url: string): Promise<string | null> => {
+    return new Promise((resolve) => {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas')
+          canvas.width = img.width
+          canvas.height = img.height
+          const ctx = canvas.getContext('2d')
+          if (ctx) {
+            ctx.drawImage(img, 0, 0)
+            resolve(canvas.toDataURL('image/png'))
+          } else {
+            resolve(null)
+          }
+        } catch {
+          resolve(null)
+        }
+      }
+      img.onerror = () => resolve(null)
+      img.src = url
+    })
+  }
+
+  // Fonction d'export PDF des statistiques
+  const exportStatsPDF = async (options: typeof exportOptions) => {
+    const doc = new jsPDF()
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const margin = 15
+    let yPos = margin
+    
+    // Déterminer la période à utiliser
+    const useSportFilter = options.includeSportFilter ? statsSportFilter : "all"
+    
+    // Couleurs
+    const primaryColor: [number, number, number] = [59, 130, 246] // blue-500
+    const secondaryColor: [number, number, number] = [16, 185, 129] // emerald-500
+    const textColor: [number, number, number] = [31, 41, 55] // gray-800
+    const lightGray: [number, number, number] = [156, 163, 175] // gray-400
+    const veryLightGray: [number, number, number] = [243, 244, 246] // gray-100
+    
+    const currencySymbol = settings.branding?.currencySymbol || '.-'
+    
+    // ========== EN-TÊTE ==========
+    // Bandeau coloré
+    doc.setFillColor(...primaryColor)
+    doc.rect(0, 0, pageWidth, 45, 'F')
+    
+    // Logo de l'entreprise (si disponible)
+    let logoOffset = 0
+    if (settings.branding?.logoUrl) {
+      try {
+        const logoBase64 = await loadImageAsBase64(settings.branding.logoUrl)
+        if (logoBase64) {
+          // Ajouter un fond blanc arrondi pour le logo
+          doc.setFillColor(255, 255, 255)
+          doc.roundedRect(margin - 2, 5, 34, 34, 3, 3, 'F')
+          
+          // Ajouter le logo
+          doc.addImage(logoBase64, 'PNG', margin, 7, 30, 30)
+          logoOffset = 38 // Décaler le texte à droite du logo
+        }
+      } catch (e) {
+        console.log('Impossible de charger le logo pour le PDF')
+      }
+    }
+    
+    // Nom de l'établissement
+    doc.setTextColor(255, 255, 255)
+    doc.setFontSize(22)
+    doc.setFont('helvetica', 'bold')
+    const establishmentName = settings.branding?.siteName || 'SportSlot'
+    doc.text(establishmentName, margin + logoOffset, 20)
+    
+    // Sous-titre : Rapport de statistiques
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'normal')
+    doc.text(t('admin.agenda.statsPage.export.title'), margin + logoOffset, 30)
+    
+    // Date de génération à droite
+    doc.setFontSize(9)
+    const dateStr = new Date().toLocaleDateString(i18n.language, { 
+      day: 'numeric', 
+      month: 'long', 
+      year: 'numeric' 
+    })
+    doc.text(dateStr, pageWidth - margin, 15, { align: 'right' })
+    
+    // Coordonnées de l'entreprise à droite (si disponibles)
+    let contactY = 22
+    doc.setFontSize(8)
+    if (settings.branding?.contactEmail) {
+      doc.text(settings.branding.contactEmail, pageWidth - margin, contactY, { align: 'right' })
+      contactY += 5
+    }
+    if (settings.branding?.contactPhone) {
+      doc.text(settings.branding.contactPhone, pageWidth - margin, contactY, { align: 'right' })
+      contactY += 5
+    }
+    if (settings.branding?.address) {
+      // Limiter la longueur de l'adresse
+      const shortAddress = settings.branding.address.length > 35 
+        ? settings.branding.address.substring(0, 35) + '...' 
+        : settings.branding.address
+      doc.text(shortAddress, pageWidth - margin, contactY, { align: 'right' })
+    }
+    
+    yPos = 55
+    
+    // ========== PÉRIODE ==========
+    doc.setTextColor(...textColor)
+    doc.setFillColor(...veryLightGray)
+    doc.roundedRect(margin, yPos, pageWidth - margin * 2, 18, 3, 3, 'F')
+    
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.text(t('admin.agenda.statsPage.export.period') + ' :', margin + 5, yPos + 7)
+    
+    const periodText = (() => {
+      if (options.period === "custom" && options.customStartDate && options.customEndDate) {
+        return `${options.customStartDate} - ${options.customEndDate}`
+      }
+      const periods: Record<string, string> = {
+        thisWeek: t('admin.agenda.statsPage.filters.thisWeek'),
+        lastWeek: t('admin.agenda.statsPage.filters.lastWeek'),
+        thisMonth: t('admin.agenda.statsPage.filters.thisMonth'),
+        lastMonth: t('admin.agenda.statsPage.filters.lastMonth'),
+        last30Days: t('admin.agenda.statsPage.filters.last30Days'),
+        last90Days: t('admin.agenda.statsPage.filters.last90Days'),
+        thisYear: t('admin.agenda.statsPage.filters.thisYear'),
+        custom: `${statsCustomDateStart || '?'} - ${statsCustomDateEnd || '?'}`
+      }
+      return periods[statsPeriod] || statsPeriod
+    })()
+    
+    doc.setFont('helvetica', 'normal')
+    doc.text(periodText, margin + 35, yPos + 7)
+    
+    // Sport filtré (si applicable)
+    if (useSportFilter !== "all") {
+      const sport = sports.find(s => s.id === useSportFilter)
+      if (sport) {
+        doc.setFont('helvetica', 'bold')
+        doc.text('Sport :', margin + 5, yPos + 14)
+        doc.setFont('helvetica', 'normal')
+        doc.text(sport.name, margin + 27, yPos + 14)
+      }
+    }
+    
+    yPos += 28
+    
+    // ========== KPIS PRINCIPAUX ==========
+    doc.setFontSize(13)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...primaryColor)
+    doc.text(t('admin.agenda.statsPage.export.summaryShort').toUpperCase(), margin, yPos)
+    yPos += 8
+    
+    autoTable(doc, {
+      startY: yPos,
+      head: [[
+        t('admin.agenda.statsPage.kpis.revenue'),
+        t('admin.agenda.statsPage.kpis.bookings'),
+        t('admin.agenda.statsPage.kpis.clients'),
+        t('admin.agenda.statsPage.kpis.occupancy')
+      ]],
+      body: [[
+        `${detailedStats.kpis.totalRevenue} ${currencySymbol}`,
+        String(detailedStats.kpis.totalBookings),
+        String(detailedStats.kpis.uniqueClients),
+        `${detailedStats.kpis.occupancyRate}%`
+      ]],
+      theme: 'grid',
+      headStyles: { 
+        fillColor: primaryColor, 
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 9,
+        cellPadding: 4
+      },
+      bodyStyles: {
+        fontSize: 12,
+        fontStyle: 'bold',
+        cellPadding: 5
+      },
+      styles: { halign: 'center' },
+      margin: { left: margin, right: margin }
+    })
+    
+    yPos = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
+    
+    // KPIs secondaires
+    autoTable(doc, {
+      startY: yPos,
+      head: [[
+        t('admin.agenda.statsPage.kpis.avgPerBooking'),
+        t('admin.agenda.statsPage.kpis.totalSlots'),
+        t('admin.agenda.statsPage.kpis.bookedSlots'),
+        t('admin.agenda.statsPage.kpis.totalPeople')
+      ]],
+      body: [[
+        `${detailedStats.kpis.avgPerBooking} ${currencySymbol}`,
+        String(detailedStats.kpis.totalSlots),
+        String(detailedStats.kpis.bookedSlots),
+        String(detailedStats.kpis.totalPeople)
+      ]],
+      theme: 'grid',
+      headStyles: { 
+        fillColor: [107, 114, 128], 
+        textColor: [255, 255, 255],
+        fontSize: 9,
+        cellPadding: 3
+      },
+      bodyStyles: {
+        fontSize: 10,
+        cellPadding: 4
+      },
+      styles: { halign: 'center' },
+      margin: { left: margin, right: margin }
+    })
+    
+    yPos = (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 15
+    
+    // ========== RÉPARTITION PAR SPORT (avec graphique de barres) ==========
+    if (detailedStats.charts.bySport.length > 0) {
+      doc.setFontSize(13)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(...primaryColor)
+      doc.text(t('admin.agenda.statsPage.charts.bySport').toUpperCase(), margin, yPos)
+      yPos += 10
+      
+      // Dessiner des barres de progression pour chaque sport
+      const maxRevenue = Math.max(...detailedStats.charts.bySport.map(s => s.revenue), 1)
+      const barHeight = 12
+      const barMaxWidth = pageWidth - margin * 2 - 80
+      
+      detailedStats.charts.bySport.forEach((sport, index) => {
+        const barWidth = (sport.revenue / maxRevenue) * barMaxWidth
+        
+        // Nom du sport (sans emoji)
+        doc.setFontSize(10)
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(...textColor)
+        doc.text(sport.name, margin, yPos + barHeight / 2 + 1)
+        
+        // Barre de fond
+        doc.setFillColor(...veryLightGray)
+        doc.roundedRect(margin + 50, yPos, barMaxWidth, barHeight, 2, 2, 'F')
+        
+        // Barre de progression
+        const colors: [number, number, number][] = [
+          [59, 130, 246],   // blue
+          [16, 185, 129],   // emerald
+          [168, 85, 247],   // purple
+          [245, 158, 11],   // amber
+          [239, 68, 68],    // red
+          [6, 182, 212],    // cyan
+        ]
+        doc.setFillColor(...colors[index % colors.length])
+        if (barWidth > 0) {
+          doc.roundedRect(margin + 50, yPos, Math.max(barWidth, 4), barHeight, 2, 2, 'F')
+        }
+        
+        // Valeurs à droite
+        doc.setFontSize(9)
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(...textColor)
+        const valueText = `${sport.revenue}${currencySymbol} (${sport.percentage}%)`
+        doc.text(valueText, pageWidth - margin, yPos + barHeight / 2 + 1, { align: 'right' })
+        
+        yPos += barHeight + 6
+      })
+      
+      yPos += 10
+    }
+    
+    // ========== MODE DÉTAILLÉ ==========
+    if (options.mode === "detailed") {
+      // Nouvelle page si nécessaire
+      if (yPos > pageHeight - 80) {
+        doc.addPage()
+        yPos = margin
+      }
+      
+      // Graphique des heures populaires
+      if (detailedStats.charts.byHour.some(h => h.bookings > 0)) {
+        doc.setFontSize(13)
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(...primaryColor)
+        doc.text(t('admin.agenda.statsPage.charts.byHour').toUpperCase(), margin, yPos)
+        yPos += 10
+        
+        const hourData = detailedStats.charts.byHour.slice(6, 22) // 6h à 22h
+        const maxBookings = Math.max(...hourData.map(h => h.bookings), 1)
+        const chartWidth = pageWidth - margin * 2
+        const barWidth = chartWidth / hourData.length - 2
+        const chartHeight = 30
+        
+        // Dessiner les barres
+        hourData.forEach((hour, index) => {
+          const barHeight = (hour.bookings / maxBookings) * chartHeight
+          const x = margin + index * (barWidth + 2)
+          
+          // Barre
+          doc.setFillColor(...secondaryColor)
+          if (barHeight > 0) {
+            doc.rect(x, yPos + chartHeight - barHeight, barWidth, barHeight, 'F')
+          }
+          
+          // Label heure
+          doc.setFontSize(6)
+          doc.setTextColor(...lightGray)
+          doc.text(`${hour.hour + 6}h`, x + barWidth / 2, yPos + chartHeight + 6, { align: 'center' })
+        })
+        
+        yPos += chartHeight + 20
+      }
+      
+      // Nouvelle page pour la liste des réservations
+      if (yPos > pageHeight - 60) {
+        doc.addPage()
+        yPos = margin
+      }
+      
+      // Liste des réservations
+      doc.setFontSize(13)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(...primaryColor)
+      doc.text(t('admin.agenda.statsPage.export.bookingsList').toUpperCase(), margin, yPos)
+      yPos += 8
+      
+      const filteredBookings = detailedStats.tables.recentBookings
+      
+      if (filteredBookings.length > 0) {
+        autoTable(doc, {
+          startY: yPos,
+          head: [[
+            'Date', 
+            t('admin.agenda.statsPage.tables.client'), 
+            'Sport', 
+            t('admin.agenda.statsPage.tables.people'), 
+            t('admin.agenda.statsPage.tables.price')
+          ]],
+          body: filteredBookings.map(booking => {
+            const sport = sports.find(s => s.id === booking.sportId)
+            return [
+              booking.date || '-',
+              booking.customerName || '-',
+              sport?.name || '-',
+              String(booking.numberOfPeople || 1),
+              `${booking.totalPrice || 0} ${currencySymbol}`
+            ]
+          }),
+          theme: 'striped',
+          headStyles: { 
+            fillColor: primaryColor, 
+            textColor: [255, 255, 255],
+            fontSize: 9,
+            cellPadding: 3
+          },
+          bodyStyles: {
+            fontSize: 8,
+            cellPadding: 2
+          },
+          columnStyles: {
+            0: { cellWidth: 25 },
+            1: { cellWidth: 50 },
+            2: { cellWidth: 35 },
+            3: { cellWidth: 20, halign: 'center' },
+            4: { cellWidth: 30, halign: 'right' }
+          },
+          margin: { left: margin, right: margin }
+        })
+      } else {
+        doc.setFontSize(10)
+        doc.setFont('helvetica', 'italic')
+        doc.setTextColor(...lightGray)
+        doc.text(t('admin.agenda.statsPage.charts.noData'), margin, yPos + 5)
+      }
+    }
+    
+    // ========== PIED DE PAGE ==========
+    const pageCount = doc.getNumberOfPages()
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i)
+      
+      // Ligne de séparation
+      doc.setDrawColor(...lightGray)
+      doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15)
+      
+      // Texte du pied de page
+      doc.setFontSize(8)
+      doc.setTextColor(...lightGray)
+      doc.setFont('helvetica', 'normal')
+      
+      // À gauche : nom de l'établissement
+      doc.text(establishmentName, margin, pageHeight - 8)
+      
+      // Au centre : date de génération
+      const footerDate = `${t('admin.agenda.statsPage.export.generatedOn')} ${new Date().toLocaleDateString(i18n.language)}`
+      doc.text(footerDate, pageWidth / 2, pageHeight - 8, { align: 'center' })
+      
+      // À droite : numéro de page
+      doc.text(`Page ${i}/${pageCount}`, pageWidth - margin, pageHeight - 8, { align: 'right' })
+    }
+    
+    // Télécharger le PDF
+    const fileName = `rapport-statistiques-${new Date().toISOString().split('T')[0]}.pdf`
+    doc.save(fileName)
+  }
+
   const parseDateParts = (date: Date) => {
     const year = date.getFullYear()
     const month = String(date.getMonth() + 1).padStart(2, "0")
@@ -1002,7 +1821,7 @@ export default function AdminPage() {
     
     // Filtrer par sport si nécessaire
     if (selectedSportFilter !== "all") {
-      result = result.filter((s) => (s.sportIds || [s.sportId]).includes(selectedSportFilter))
+      result = result.filter((s) => s.sportId === selectedSportFilter)
     }
     
     return result
@@ -1012,7 +1831,7 @@ export default function AdminPage() {
     return filteredSlots.map((slot) => {
       const start = new Date(`${slot.date}T${slot.time}`)
       const end = new Date(start.getTime() + slot.duration * 60000)
-      const sportLabels = getSportIcons(slot.sportIds || [slot.sportId!]).join(" ")
+      const sportInfo = getSportInfo(slot.sportId)
       const availablePlaces = slot.maxCapacity - slot.currentBookings
       const isFullyBooked = availablePlaces === 0
       const isAlmostFull = availablePlaces <= slot.maxCapacity * 0.2
@@ -1055,7 +1874,7 @@ export default function AdminPage() {
 
       return {
         id: slot.id,
-        title: sportLabels || "Créneau",
+        title: sportInfo.icon || "🏆",
         start,
         end,
         allDay: false,
@@ -1065,13 +1884,15 @@ export default function AdminPage() {
         extendedProps: {
           slot,
           type: "slot",
+          sportId: slot.sportId,
           isUnpublished,
           isOutsideWorkingHours,
           isPendingDeletion,
+          sportInfo,
         },
       }
     })
-  }, [filteredSlots])
+  }, [filteredSlots, sports])
 
   // Liste des dates fermées (format YYYY-MM-DD)
   const closedDates = useMemo(() => {
@@ -1369,8 +2190,9 @@ export default function AdminPage() {
   const saveQuickEdit = () => {
     if (!quickEdit || quickEdit.field === "delete") return
     
-    if (quickEdit.field === "sports" && quickEdit.selectedSports) {
-      updateSlot(quickEdit.slotId, { sportIds: quickEdit.selectedSports })
+    // Changement de sport (single select)
+    if (quickEdit.field === "sports" && quickEdit.selectedSports && quickEdit.selectedSports.length > 0) {
+      updateSlot(quickEdit.slotId, { sportId: quickEdit.selectedSports[0] })
       setQuickEdit(null)
       return
     }
@@ -1446,10 +2268,8 @@ export default function AdminPage() {
       return <div className="p-2 text-white text-xs">{t('home.slot.slot')}</div>
     }
     
-    const sportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
-    const sportIcons = getSportIcons(sportIds, true)
+    const sportInfo = getSportInfo(slot.sportId, true)
     const availablePlaces = slot.maxCapacity - slot.currentBookings
-    const hasDisabledSport = sportIcons.some(s => s.disabled)
     const isOutsideWorkingHours = slot.outsideWorkingHours === true
     const isPendingDeletion = slot.pendingDeletion === true
 
@@ -1459,12 +2279,7 @@ export default function AdminPage() {
         <div className={`flex items-center gap-1 px-1 py-0.5 text-xs truncate ${isPendingDeletion ? "line-through opacity-70" : ""}`}>
           {isPendingDeletion && <span title={t('admin.agenda.pendingDeletion')}>🗑️</span>}
           {isOutsideWorkingHours && !isPendingDeletion && <span title={t('admin.settings.slotsOutsideHours')}>⚠️</span>}
-          <span className="flex items-center gap-0.5">
-            {sportIcons.slice(0, 2).map((s, i) => (
-              <span key={i} className={s.disabled ? "opacity-40 grayscale" : ""}>{s.icon}</span>
-            ))}
-            {sportIcons.length > 2 && <span className="text-[10px] opacity-60">+{sportIcons.length - 2}</span>}
-          </span>
+          <span className={sportInfo.disabled ? "opacity-40 grayscale" : ""}>{sportInfo.icon}</span>
           <span className="font-medium">{slot.price}{settings.branding?.currencySymbol || ".-"}</span>
           {slot.currentBookings > 0 && (
             <span className="bg-white/30 px-1 rounded text-[10px]">{slot.currentBookings}/{slot.maxCapacity}</span>
@@ -1494,20 +2309,15 @@ export default function AdminPage() {
         )}
         <div className="flex items-center justify-between gap-1 min-w-0">
           <div
-            onClick={isEditDisabled ? undefined : (e) => openQuickEdit(e as any, slot.id, "sports", sportIds)}
-            className={`text-sm sm:text-base px-0.5 sm:px-1 rounded flex items-center gap-0.5 flex-shrink min-w-0 overflow-hidden ${isEditDisabled ? "" : "hover:bg-white/20 cursor-pointer transition-colors"}`}
-            title={isEditDisabled ? undefined : t('admin.slots.editSports')}
+            className="text-sm sm:text-base px-0.5 sm:px-1 rounded flex items-center gap-0.5 flex-shrink min-w-0 overflow-hidden"
+            title={sportInfo.name}
           >
-            {sportIcons.slice(0, 3).map((s, i) => (
-              <span 
-                key={i} 
-                className={`flex-shrink-0 ${s.disabled ? "opacity-40 grayscale" : ""}`}
-                title={s.disabled ? `${s.name} (${t('admin.sports.disabled')})` : s.name}
-              >
-                {s.icon}
-              </span>
-            ))}
-            {sportIcons.length > 3 && <span className="text-[10px] opacity-70">+{sportIcons.length - 3}</span>}
+            <span 
+              className={`flex-shrink-0 ${sportInfo.disabled ? "opacity-40 grayscale" : ""}`}
+              title={sportInfo.disabled ? `${sportInfo.name} (${t('admin.sports.disabled')})` : sportInfo.name}
+            >
+              {sportInfo.icon}
+            </span>
           </div>
           <div
             onClick={isEditDisabled ? undefined : (e) => openQuickEdit(e as any, slot.id, "price", slot.price)}
@@ -1687,14 +2497,21 @@ export default function AdminPage() {
     }
   }
 
-  // Vérifier si un créneau chevauche un autre
-  const checkSlotOverlap = (slotId: string, date: string, time: string, duration: number) => {
+  // Vérifier si un créneau chevauche un autre DU MÊME SPORT
+  // Les créneaux de sports différents peuvent se chevaucher
+  const checkSlotOverlap = (slotId: string, date: string, time: string, duration: number, sportId?: string) => {
     const slotStart = new Date(`${date}T${time}`)
     const slotEnd = new Date(slotStart.getTime() + duration * 60000)
+    
+    // Si sportId fourni, on cherche le sport du créneau existant
+    const existingSlot = slotId ? slots.find(s => s.id === slotId) : null
+    const targetSportId = sportId || existingSlot?.sportId
     
     return slots.some(s => {
       if (s.id === slotId) return false // Ignorer le créneau lui-même
       if (s.date !== date) return false // Pas le même jour
+      // Les créneaux de sports différents peuvent se chevaucher
+      if (targetSportId && s.sportId !== targetSportId) return false
       
       const otherStart = new Date(`${s.date}T${s.time}`)
       const otherEnd = new Date(otherStart.getTime() + s.duration * 60000)
@@ -1771,7 +2588,10 @@ export default function AdminPage() {
     
     const newStart = info.event.start
     const newEnd = info.event.end
-    const duration = Math.max(30, Math.round((newEnd.getTime() - newStart.getTime()) / 60000))
+    // Arrondir à l'heure (minimum 1h)
+    const durationMinutes = Math.round((newEnd.getTime() - newStart.getTime()) / 60000)
+    const roundedHours = Math.max(1, Math.round(durationMinutes / 60))
+    const duration = roundedHours * 60
     
     // Récupérer la nouvelle heure de début (si redimensionné vers le haut)
     const newTime = `${String(newStart.getHours()).padStart(2, '0')}:${String(newStart.getMinutes()).padStart(2, '0')}`
@@ -1830,8 +2650,8 @@ export default function AdminPage() {
       return
     }
     
-    // Uniquement en vue semaine
-    if (selection.view.type !== "timeGridWeek") {
+    // Uniquement en vue semaine ou jour (mobile)
+    if (selection.view.type !== "timeGridWeek" && selection.view.type !== "timeGridDay") {
       selection.view.calendar.unselect()
       return
     }
@@ -1853,8 +2673,9 @@ export default function AdminPage() {
       const durationMs = endDate.getTime() - startDate.getTime()
       const durationMinutes = Math.round(durationMs / (1000 * 60))
       
-      // Utiliser la durée sélectionnée ou la durée par défaut si trop courte
-      const finalDuration = durationMinutes >= 15 ? durationMinutes : settings.defaultSlotDuration
+      // Arrondir à l'heure supérieure (minimum 1h)
+      const roundedHours = Math.max(1, Math.ceil(durationMinutes / 60))
+      const finalDuration = roundedHours * 60
       
       handleCreateSlot(dateStr, `${hours}:${minutes}`, finalDuration)
     } else if (editMode === "closure") {
@@ -1878,6 +2699,10 @@ export default function AdminPage() {
     const newDate = new Date(calendarDate)
     if (calendarView === "timeGridWeek") {
       newDate.setDate(newDate.getDate() - 7)
+      // Sur mobile, garder le même jour de la semaine ou aller au lundi
+      if (isMobileAgendaView) {
+        setSelectedDayIndex(0) // Reset au lundi de la nouvelle semaine
+      }
     } else {
       newDate.setMonth(newDate.getMonth() - 1)
     }
@@ -1889,6 +2714,10 @@ export default function AdminPage() {
     const newDate = new Date(calendarDate)
     if (calendarView === "timeGridWeek") {
       newDate.setDate(newDate.getDate() + 7)
+      // Sur mobile, garder le même jour de la semaine ou aller au lundi
+      if (isMobileAgendaView) {
+        setSelectedDayIndex(0) // Reset au lundi de la nouvelle semaine
+      }
     } else {
       newDate.setMonth(newDate.getMonth() + 1)
     }
@@ -1896,7 +2725,16 @@ export default function AdminPage() {
   }
 
   const handleCalendarToday = () => {
-    setCalendarDate(new Date())
+    const today = new Date()
+    setCalendarDate(today)
+    
+    // Sur mobile, sélectionner le jour d'aujourd'hui
+    if (isMobileAgendaView && calendarView === "timeGridWeek") {
+      const dayOfWeek = today.getDay()
+      // Convertir dimanche (0) -> 6, lundi (1) -> 0, etc.
+      const dayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+      setSelectedDayIndex(dayIndex)
+    }
   }
 
   const handleViewSwitch = (view: "timeGridWeek" | "dayGridMonth") => {
@@ -1905,8 +2743,124 @@ export default function AdminPage() {
   
   // Aller à une date spécifique en vue semaine
   const goToDateInWeekView = (date: Date) => {
-    setCalendarDate(date)
+    // Calculer le lundi de la semaine de cette date
+    const targetDate = new Date(date)
+    targetDate.setHours(12, 0, 0, 0)
+    
+    const dayOfWeek = targetDate.getDay()
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+    const monday = new Date(targetDate)
+    monday.setDate(targetDate.getDate() + mondayOffset)
+    monday.setHours(12, 0, 0, 0)
+    
+    // Définir calendarDate au lundi de la semaine (pour que weekDays soit cohérent)
+    setCalendarDate(monday)
     setCalendarView("timeGridWeek")
+    
+    // Sur mobile, stocker la date cible pour synchronisation ultérieure
+    if (window.innerWidth < 640) {
+      setMobileTargetDate(new Date(targetDate))
+    }
+  }
+
+  // Ref pour stocker les coordonnées Y de départ (pour détecter swipe horizontal vs vertical)
+  const mobileDaySwipeStartY = useRef<number | null>(null)
+
+  // Handlers pour le swipe des jours sur mobile (agenda admin)
+  // Ne capture que les vrais swipes horizontaux, pas les taps ou drags verticaux
+  const handleMobileDaySwipeStart = (e: React.TouchEvent) => {
+    if (!isMobileAgendaView || calendarView !== "timeGridWeek") return
+    setMobileDaySwipeStart(e.touches[0].clientX)
+    mobileDaySwipeStartY.current = e.touches[0].clientY
+    setIsMobileDaySwiping(false)
+  }
+
+  const handleMobileDaySwipeMove = (e: React.TouchEvent) => {
+    if (mobileDaySwipeStart === null || !isMobileAgendaView) return
+    
+    const diffX = e.touches[0].clientX - mobileDaySwipeStart
+    const diffY = mobileDaySwipeStartY.current !== null ? e.touches[0].clientY - mobileDaySwipeStartY.current : 0
+    
+    // Ne considérer comme swipe que si le mouvement est principalement horizontal
+    // (mouvement X > mouvement Y * 1.5) et suffisamment grand
+    const isHorizontalSwipe = Math.abs(diffX) > Math.abs(diffY) * 1.5 && Math.abs(diffX) > 30
+    
+    if (isHorizontalSwipe) {
+      setIsMobileDaySwiping(true)
+      setMobileDaySwipeOffset(diffX)
+    }
+  }
+
+  const handleMobileDaySwipeEnd = () => {
+    if (!isMobileDaySwiping || !isMobileAgendaView) {
+      setMobileDaySwipeStart(null)
+      setMobileDaySwipeOffset(0)
+      mobileDaySwipeStartY.current = null
+      return
+    }
+
+    const threshold = 60
+    if (mobileDaySwipeOffset > threshold) {
+      // Swipe droite = jour précédent
+      if (selectedDayIndex > 0) {
+        setSelectedDayIndex(selectedDayIndex - 1)
+      } else {
+        // Passer à la semaine précédente, dernier jour
+        handleCalendarPrev()
+        setSelectedDayIndex(6)
+      }
+    } else if (mobileDaySwipeOffset < -threshold) {
+      // Swipe gauche = jour suivant
+      if (selectedDayIndex < 6) {
+        setSelectedDayIndex(selectedDayIndex + 1)
+      } else {
+        // Passer à la semaine suivante, premier jour
+        handleCalendarNext()
+        setSelectedDayIndex(0)
+      }
+    }
+
+    setMobileDaySwipeStart(null)
+    setMobileDaySwipeOffset(0)
+    setIsMobileDaySwiping(false)
+    mobileDaySwipeStartY.current = null
+  }
+
+  // Handlers pour le swipe des semaines sur mobile (barre des dates)
+  const handleMobileWeekSwipeStart = (e: React.TouchEvent) => {
+    if (!isMobileAgendaView || calendarView !== "timeGridWeek") return
+    setMobileWeekSwipeStart(e.touches[0].clientX)
+    setIsMobileWeekSwiping(false)
+  }
+
+  const handleMobileWeekSwipeMove = (e: React.TouchEvent) => {
+    if (mobileWeekSwipeStart === null || !isMobileAgendaView) return
+    const diff = e.touches[0].clientX - mobileWeekSwipeStart
+    if (Math.abs(diff) > 10) {
+      setIsMobileWeekSwiping(true)
+      setMobileWeekSwipeOffset(diff)
+    }
+  }
+
+  const handleMobileWeekSwipeEnd = () => {
+    if (!isMobileWeekSwiping || !isMobileAgendaView) {
+      setMobileWeekSwipeStart(null)
+      setMobileWeekSwipeOffset(0)
+      return
+    }
+
+    const threshold = 50
+    if (mobileWeekSwipeOffset > threshold) {
+      // Swipe droite = semaine précédente
+      handleCalendarPrev()
+    } else if (mobileWeekSwipeOffset < -threshold) {
+      // Swipe gauche = semaine suivante
+      handleCalendarNext()
+    }
+
+    setMobileWeekSwipeStart(null)
+    setMobileWeekSwipeOffset(0)
+    setIsMobileWeekSwiping(false)
   }
 
   const confirmAndDeleteRange = async (start: Date, end: Date, label: string) => {
@@ -1947,7 +2901,7 @@ export default function AdminPage() {
   const handleEditSlot = (slot: TimeSlot) => {
     setEditingSlot(slot)
     setSlotForm({
-      sportIds: slot.sportIds || (slot.sportId ? [slot.sportId] : []),
+      sportId: slot.sportId,
       maxCapacity: slot.maxCapacity,
       price: slot.price,
       duration: slot.duration,
@@ -2098,12 +3052,6 @@ export default function AdminPage() {
       return
     }
 
-    // Vérifier si un créneau existe déjà à cet emplacement
-    if (checkSlotOverlap("", date, time, duration)) {
-      // Un créneau existe déjà, ne pas créer
-      return
-    }
-
     // Vérifier si le jour est fermé (période de fermeture)
     if (isDateClosed(date)) {
       const confirmed = await showConfirm(t('admin.agenda.closedDayConfirm'), { variant: 'question' })
@@ -2114,35 +3062,81 @@ export default function AdminPage() {
       }
     }
 
-    // Si un sport spécifique est sélectionné dans le filtre, on l'utilise
-    // Sinon on prend tous les sports activés
-    let sportIdsForSlot: string[]
+    // Si un sport est sélectionné dans le filtre, créer directement le créneau
     if (selectedSportFilter !== "all") {
-      // Vérifier que le sport sélectionné est bien activé
       const selectedSport = sports.find((s) => s.id === selectedSportFilter && s.enabled)
       if (!selectedSport) {
         await showAlert(t('admin.sports.notEnabled'), { variant: 'warning' })
         return
       }
-      sportIdsForSlot = [selectedSportFilter]
-    } else {
-      sportIdsForSlot = enabledSports.map((s) => s.id)
-    }
+      
+      // Vérifier si un créneau existe déjà pour ce sport
+      if (checkSlotOverlap("", date, time, duration, selectedSportFilter)) {
+        return
+      }
 
-    const newSlot: TimeSlot = {
-      id: `${Date.now()}-${Math.random()}`,
-      sportIds: sportIdsForSlot,
-      date,
-      time,
-      duration,
-      maxCapacity: settings.defaultMaxCapacity,
-      currentBookings: 0,
-      price: settings.defaultPrice,
-      published: false, // Nouveau créneau = brouillon (orange)
+      const newSlot: TimeSlot = {
+        id: `${Date.now()}-${Math.random()}`,
+        sportId: selectedSportFilter,
+        date,
+        time,
+        duration,
+        maxCapacity: settings.defaultMaxCapacity,
+        currentBookings: 0,
+        price: settings.defaultPrice,
+        published: false,
+      }
+      const updatedSlots = [...slots, newSlot]
+      setSlots(updatedSlots)
+      saveSlots(updatedSlots)
+    } else {
+      // Mode "Tous les sports" - ouvrir dialog pour choisir les sports
+      setCreateSlotDialog({
+        isOpen: true,
+        date,
+        time,
+        duration,
+        price: settings.defaultPrice,
+        maxCapacity: settings.defaultMaxCapacity,
+        selectedSports: enabledSports.map(s => s.id), // Tous sélectionnés par défaut
+      })
     }
-    const updatedSlots = [...slots, newSlot]
-    setSlots(updatedSlots)
-    saveSlots(updatedSlots)
+  }
+  
+  // Créer les créneaux après sélection des sports dans le dialog
+  const confirmCreateSlots = () => {
+    const { date, time, duration, price, maxCapacity, selectedSports } = createSlotDialog
+    
+    if (selectedSports.length === 0) {
+      setCreateSlotDialog({ ...createSlotDialog, isOpen: false })
+      return
+    }
+    
+    const newSlots: TimeSlot[] = []
+    for (const sportId of selectedSports) {
+      // Vérifier qu'un créneau n'existe pas déjà pour ce sport
+      if (!checkSlotOverlap("", date, time, duration, sportId)) {
+        newSlots.push({
+          id: `${Date.now()}-${Math.random()}-${sportId}`,
+          sportId,
+          date,
+          time,
+          duration,
+          maxCapacity,
+          currentBookings: 0,
+          price,
+          published: false,
+        })
+      }
+    }
+    
+    if (newSlots.length > 0) {
+      const updatedSlots = [...slots, ...newSlots]
+      setSlots(updatedSlots)
+      saveSlots(updatedSlots)
+    }
+    
+    setCreateSlotDialog({ isOpen: false, date: '', time: '', duration: 60, price: 50, maxCapacity: 4, selectedSports: [] })
   }
 
   // Écran de chargement
@@ -2161,7 +3155,7 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b sticky top-0 z-50 shadow-sm">
-        <div className="container mx-auto px-2 sm:px-4">
+        <div className="mx-auto px-2 sm:px-3 lg:px-6 xl:px-8 max-w-[1600px]">
           <div className="flex items-center justify-between h-14 sm:h-16">
             <div className="flex items-center gap-2 sm:gap-3">
               <div 
@@ -2220,10 +3214,10 @@ export default function AdminPage() {
         </div>
       </header>
 
-      <main className="container mx-auto px-2 sm:px-4 py-3 sm:py-6">
-        <Card className="p-3 sm:p-6">
+      <main className="mx-auto px-2 sm:px-3 lg:px-6 xl:px-8 py-3 sm:py-6 max-w-[1600px]">
+        <Card className="p-3 sm:p-4 lg:p-6">
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-3 bg-gray-100 p-0.5 sm:p-1 rounded-lg sm:rounded-xl">
+            <TabsList className="grid w-full grid-cols-4 bg-gray-100 p-0.5 sm:p-1 rounded-lg sm:rounded-xl">
               <TabsTrigger value="agenda" className="rounded-md sm:rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm text-xs sm:text-sm py-1.5 sm:py-2">
                 <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 sm:mr-2" />
                 <span className="hidden sm:inline">{t('admin.tabs.agenda')}</span>
@@ -2231,6 +3225,10 @@ export default function AdminPage() {
               <TabsTrigger value="sports" className="rounded-md sm:rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm text-xs sm:text-sm py-1.5 sm:py-2">
                 <Trophy className="w-3.5 h-3.5 sm:w-4 sm:h-4 sm:mr-2" />
                 <span className="hidden sm:inline">{t('admin.tabs.sports')}</span>
+              </TabsTrigger>
+              <TabsTrigger value="stats" className="rounded-md sm:rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm text-xs sm:text-sm py-1.5 sm:py-2">
+                <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 sm:mr-2" />
+                <span className="hidden sm:inline">{t('admin.tabs.stats')}</span>
               </TabsTrigger>
               <TabsTrigger value="slots" className="rounded-md sm:rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm text-xs sm:text-sm py-1.5 sm:py-2">
                 <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 sm:mr-2" />
@@ -2240,7 +3238,7 @@ export default function AdminPage() {
 
             <TabsContent value="agenda" className="mt-6">
               {/* Statistiques en ligne */}
-              {/* Statistiques dynamiques de la période - scroll horizontal sur mobile */}
+              {/* Statistiques dynamiques de la période - grille adaptative */}
               <div className="mb-4 sm:mb-6">
                 <div className="flex items-center justify-between mb-2 sm:mb-3">
                   <h3 className="text-xs sm:text-sm font-medium text-gray-500">
@@ -2250,70 +3248,77 @@ export default function AdminPage() {
                     {periodDates.start.toLocaleDateString(i18n.language, { day: "numeric", month: "short" })} - {periodDates.end.toLocaleDateString(i18n.language, { day: "numeric", month: "short" })}
                   </span>
                 </div>
-                <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-2 -mx-2 px-2 sm:mx-0 sm:px-0 sm:grid sm:grid-cols-3 md:grid-cols-6 scrollbar-hide">
-                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                {/* Mobile: scroll horizontal, Tablette: 3 col, Desktop: 6 col */}
+                <div className="flex gap-2 overflow-x-auto pb-2 -mx-2 px-2 sm:mx-0 sm:px-0 sm:grid sm:grid-cols-3 xl:grid-cols-6 sm:gap-2.5 lg:gap-3 scrollbar-hide">
+                  {/* Créneaux */}
+                  <div className="flex-shrink-0 w-[105px] sm:w-auto bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg sm:rounded-xl p-2 sm:p-2.5 lg:p-3">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 lg:w-9 lg:h-9 bg-blue-500 rounded-md sm:rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-lg sm:text-2xl font-bold text-blue-900">{stats.totalSlots}</p>
-                        <p className="text-[10px] sm:text-xs text-blue-600 font-medium truncate">{t('home.slot.slots')}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-emerald-50 to-emerald-100 border border-emerald-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-emerald-500 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Users className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-lg sm:text-2xl font-bold text-emerald-900">{stats.totalBookings}</p>
-                        <p className="text-[10px] sm:text-xs text-emerald-600 font-medium truncate">{t('admin.slots.bookings')}</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-base sm:text-lg lg:text-xl font-bold text-blue-900 leading-tight">{stats.totalSlots}</p>
+                        <p className="text-[9px] sm:text-[10px] lg:text-xs text-blue-600 font-medium truncate">{t('home.slot.slots')}</p>
                       </div>
                     </div>
                   </div>
-                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-violet-50 to-violet-100 border border-violet-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-violet-500 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Users className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                  {/* Réservations */}
+                  <div className="flex-shrink-0 w-[105px] sm:w-auto bg-gradient-to-br from-emerald-50 to-emerald-100 border border-emerald-200 rounded-lg sm:rounded-xl p-2 sm:p-2.5 lg:p-3">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 lg:w-9 lg:h-9 bg-emerald-500 rounded-md sm:rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-lg sm:text-2xl font-bold text-violet-900">{stats.totalCapacity}</p>
-                        <p className="text-[10px] sm:text-xs text-violet-600 font-medium truncate">{t('admin.agenda.stats.places')}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <DollarSign className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-lg sm:text-2xl font-bold text-amber-900">{stats.totalRevenue}</p>
-                        <p className="text-[10px] sm:text-xs text-amber-600 font-medium truncate">{settings.branding?.currency || "CHF"}</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-base sm:text-lg lg:text-xl font-bold text-emerald-900 leading-tight">{stats.totalBookings}</p>
+                        <p className="text-[9px] sm:text-[10px] lg:text-xs text-emerald-600 font-medium truncate">{t('admin.slots.bookings')}</p>
                       </div>
                     </div>
                   </div>
-                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-cyan-50 to-cyan-100 border border-cyan-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-cyan-500 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                  {/* Places */}
+                  <div className="flex-shrink-0 w-[105px] sm:w-auto bg-gradient-to-br from-violet-50 to-violet-100 border border-violet-200 rounded-lg sm:rounded-xl p-2 sm:p-2.5 lg:p-3">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 lg:w-9 lg:h-9 bg-violet-500 rounded-md sm:rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-lg sm:text-2xl font-bold text-cyan-900">{stats.totalHours}h</p>
-                        <p className="text-[10px] sm:text-xs text-cyan-600 font-medium truncate">{t('admin.agenda.stats.hours')}</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-base sm:text-lg lg:text-xl font-bold text-violet-900 leading-tight">{stats.totalCapacity}</p>
+                        <p className="text-[9px] sm:text-[10px] lg:text-xs text-violet-600 font-medium truncate">{t('admin.agenda.stats.places')}</p>
                       </div>
                     </div>
                   </div>
-                  <div className="flex-shrink-0 w-[120px] sm:w-auto bg-gradient-to-br from-rose-50 to-rose-100 border border-rose-200 rounded-lg sm:rounded-xl p-2.5 sm:p-4">
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-rose-500 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Trophy className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                  {/* Monnaie */}
+                  <div className="flex-shrink-0 w-[105px] sm:w-auto bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200 rounded-lg sm:rounded-xl p-2 sm:p-2.5 lg:p-3">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 lg:w-9 lg:h-9 bg-amber-500 rounded-md sm:rounded-lg flex items-center justify-center flex-shrink-0">
+                        <DollarSign className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-lg sm:text-2xl font-bold text-rose-900">{stats.totalCapacity > 0 ? Math.round((stats.totalBookings / stats.totalCapacity) * 100) : 0}%</p>
-                        <p className="text-[10px] sm:text-xs text-rose-600 font-medium truncate">{t('admin.agenda.stats.fillRate')}</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-base sm:text-lg lg:text-xl font-bold text-amber-900 leading-tight">{stats.totalRevenue}</p>
+                        <p className="text-[9px] sm:text-[10px] lg:text-xs text-amber-600 font-medium truncate">{settings.branding?.currency || "CHF"}</p>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Heures */}
+                  <div className="flex-shrink-0 w-[105px] sm:w-auto bg-gradient-to-br from-cyan-50 to-cyan-100 border border-cyan-200 rounded-lg sm:rounded-xl p-2 sm:p-2.5 lg:p-3">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 lg:w-9 lg:h-9 bg-cyan-500 rounded-md sm:rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Clock className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-base sm:text-lg lg:text-xl font-bold text-cyan-900 leading-tight">{stats.totalHours}h</p>
+                        <p className="text-[9px] sm:text-[10px] lg:text-xs text-cyan-600 font-medium truncate">{t('admin.agenda.stats.hours')}</p>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Remplissage */}
+                  <div className="flex-shrink-0 w-[105px] sm:w-auto bg-gradient-to-br from-rose-50 to-rose-100 border border-rose-200 rounded-lg sm:rounded-xl p-2 sm:p-2.5 lg:p-3">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 lg:w-9 lg:h-9 bg-rose-500 rounded-md sm:rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Trophy className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-base sm:text-lg lg:text-xl font-bold text-rose-900 leading-tight">{stats.totalCapacity > 0 ? Math.round((stats.totalBookings / stats.totalCapacity) * 100) : 0}%</p>
+                        <p className="text-[9px] sm:text-[10px] lg:text-xs text-rose-600 font-medium truncate">{t('admin.agenda.stats.fillRate')}</p>
                       </div>
                     </div>
                   </div>
@@ -2345,67 +3350,90 @@ export default function AdminPage() {
                     </div>
                   </div>
 
-                  {/* Vue Semaine/Mois + Mode Vue/Édition */}
-                  <div className="flex items-center gap-1.5 sm:gap-3 justify-end">
+                  {/* Vue Semaine/Mois + Mode Vue/Édition - scroll horizontal sur tablettes */}
+                  <div className="flex items-center gap-1.5 sm:gap-2 lg:gap-3 justify-end overflow-x-auto flex-shrink-0">
                     {/* Semaine/Mois */}
-                    <div className="flex bg-white rounded-lg p-0.5 sm:p-1 border border-gray-200 shadow-sm">
-                    <button
+                    <div className="flex bg-white rounded-lg p-0.5 border border-gray-200 shadow-sm flex-shrink-0">
+                      <button
                         onClick={() => handleViewSwitch("timeGridWeek")}
-                        className={`px-2 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold rounded-md transition-all ${
+                        className={`px-2 lg:px-3 py-1.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap ${
                           calendarView === "timeGridWeek"
                             ? "bg-gray-900 text-white shadow-sm"
                             : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
-                      }`}
-                    >
-                        <span className="hidden sm:inline">{t('admin.agenda.views.week')}</span>
-                        <span className="sm:hidden">S</span>
-                    </button>
-                    <button
+                        }`}
+                      >
+                        <span className="hidden md:inline">{t('admin.agenda.views.week')}</span>
+                        <span className="md:hidden">S</span>
+                      </button>
+                      <button
                         onClick={() => handleViewSwitch("dayGridMonth")}
-                        className={`px-2 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold rounded-md transition-all ${
+                        className={`px-2 lg:px-3 py-1.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap ${
                           calendarView === "dayGridMonth"
                             ? "bg-gray-900 text-white shadow-sm"
                             : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
-                      }`}
-                    >
-                        <span className="hidden sm:inline">{t('admin.agenda.views.month')}</span>
-                        <span className="sm:hidden">M</span>
-                    </button>
-                  </div>
+                        }`}
+                      >
+                        <span className="hidden md:inline">{t('admin.agenda.views.month')}</span>
+                        <span className="md:hidden">M</span>
+                      </button>
+                    </div>
 
                     {/* Séparateur */}
-                    <div className="hidden sm:block h-8 w-px bg-gray-300" />
+                    <div className="hidden lg:block h-6 w-px bg-gray-300 flex-shrink-0" />
 
                     {/* Toggle Vue / Éditer */}
-                    <div className="flex bg-gray-100 rounded-lg p-0.5 sm:p-1">
+                    <div className="flex bg-gray-100 rounded-lg p-0.5 flex-shrink-0">
                       <button
                         onClick={() => {
                           setAgendaMode("view")
                           setEditMode("slot") // Réinitialiser le mode d'édition
                         }}
-                        className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-semibold transition-all ${
+                        className={`flex items-center gap-1 px-2 lg:px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap ${
                           agendaMode === "view"
                             ? "bg-white text-gray-900 shadow-sm"
                             : "text-gray-500 hover:text-gray-700"
                         }`}
                       >
-                        <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                        <span className="hidden sm:inline">{t('admin.agenda.viewMode')}</span>
+                        <Eye className="w-3.5 h-3.5" />
+                        <span className="hidden md:inline">{t('admin.agenda.viewMode')}</span>
                       </button>
                       <button
                         onClick={() => setAgendaMode("edit")}
-                        className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-semibold transition-all ${
+                        className={`flex items-center gap-1 px-2 lg:px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap ${
                           agendaMode === "edit"
                             ? "bg-blue-600 text-white shadow-sm"
                             : "text-gray-500 hover:text-gray-700"
                         }`}
                       >
-                        <Edit className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                        <span className="hidden sm:inline">{t('admin.agenda.editModeBtn')}</span>
+                        <Edit className="w-3.5 h-3.5" />
+                        <span className="hidden md:inline">{t('admin.agenda.editModeBtn')}</span>
                       </button>
                     </div>
+
+                    {/* Filtre sport (toujours visible) */}
+                    {(() => {
+                      const enabledSportsCount = sports.filter(s => s.enabled).length
+                      const showAllOption = enabledSportsCount <= 2
+                      return (
+                        <Select value={selectedSportFilter} onValueChange={setSelectedSportFilter}>
+                          <SelectTrigger className={`w-auto min-w-[90px] md:min-w-[120px] h-8 text-[11px] md:text-xs rounded-lg px-2 flex-shrink-0 ${selectedSportFilter !== "all" ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-200"}`}>
+                            <SelectValue placeholder="Sport" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {showAllOption && (
+                              <SelectItem value="all">{t('admin.agenda.filters.allSports')}</SelectItem>
+                            )}
+                            {sports.filter(s => s.enabled).map((sport) => (
+                              <SelectItem key={sport.id} value={sport.id}>
+                                {sport.icon} {sport.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )
+                    })()}
                   </div>
-                    </div>
+                </div>
 
                 {/* NIVEAU 2 : Outils (visible uniquement en mode édition) */}
                 {agendaMode === "edit" && (
@@ -2448,24 +3476,6 @@ export default function AdminPage() {
                       <span className="hidden sm:inline">{t('admin.agenda.editMode.eraser')}</span>
                     </button>
 
-                    {/* Filtre sport (visible seulement en mode créneau) */}
-                    {editMode === "slot" && (
-                      <div className="hidden sm:block ml-2 pl-2 border-l border-gray-200">
-                      <Select value={selectedSportFilter} onValueChange={setSelectedSportFilter}>
-                          <SelectTrigger className={`w-[140px] sm:w-[180px] h-8 sm:h-10 text-xs sm:text-sm rounded-lg ${selectedSportFilter !== "all" ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-200"}`}>
-                          <SelectValue placeholder="Sport" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="all">🎯 {t('admin.agenda.filters.allSports')}</SelectItem>
-                          {sports.filter(s => s.enabled).map((sport) => (
-                            <SelectItem key={sport.id} value={sport.id}>
-                              {sport.icon} {sport.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      </div>
-                    )}
                   </div>
 
                   {/* Actions de publication - responsive */}
@@ -2589,7 +3599,10 @@ export default function AdminPage() {
                 {agendaMode === "edit" && editMode === "slot" && (
                   <div className="px-2 sm:px-4 py-1.5 sm:py-2 bg-blue-50 text-blue-700 border-t border-blue-100 text-xs sm:text-sm font-medium flex items-center gap-1.5 sm:gap-2">
                     <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                    <span className="truncate">{t('admin.agenda.clickToAdd')}</span>
+                    <span className="truncate">
+                      <span className="hidden sm:inline">{t('admin.agenda.clickToAdd')}</span>
+                      <span className="sm:hidden">{t('admin.agenda.holdToAdd') || 'Maintenir appuyé et glisser'}</span>
+                    </span>
                     {selectedSportFilter !== "all" && (
                       <span className="ml-1 sm:ml-2 px-1.5 sm:px-2 py-0.5 bg-blue-200 rounded-full text-[10px] sm:text-xs whitespace-nowrap">
                         {sports.find(s => s.id === selectedSportFilter)?.icon}
@@ -2600,7 +3613,10 @@ export default function AdminPage() {
                 {agendaMode === "edit" && editMode === "closure" && (
                   <div className="px-2 sm:px-4 py-1.5 sm:py-2 bg-orange-50 text-orange-700 border-t border-orange-100 text-xs sm:text-sm font-medium flex items-center gap-1.5 sm:gap-2">
                     <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                    <span className="truncate">{t('admin.agenda.clickToClose')}</span>
+                    <span className="truncate">
+                      <span className="hidden sm:inline">{t('admin.agenda.clickToClose')}</span>
+                      <span className="sm:hidden">{t('admin.agenda.holdToClose') || 'Maintenir appuyé pour fermer'}</span>
+                    </span>
                   </div>
                 )}
                 {agendaMode === "edit" && editMode === "eraser" && (
@@ -2611,9 +3627,99 @@ export default function AdminPage() {
                 )}
               </div>
 
-              {/* Calendrier */}
+              {/* Barre de navigation des jours - Mobile uniquement (swipe pour semaines) */}
+              {isMobileAgendaView && calendarView === "timeGridWeek" && (
+                <div 
+                  className={`sm:hidden bg-white border border-gray-200 rounded-lg mb-2 p-2 ${isMobileWeekSwiping ? 'select-none' : ''}`}
+                  style={{
+                    transform: `translateX(${mobileWeekSwipeOffset * 0.3}px)`,
+                    transition: isMobileWeekSwiping ? 'none' : 'transform 0.2s ease-out'
+                  }}
+                  onTouchStart={handleMobileWeekSwipeStart}
+                  onTouchMove={handleMobileWeekSwipeMove}
+                  onTouchEnd={handleMobileWeekSwipeEnd}
+                >
+                  <div className="flex justify-between items-center">
+                    {weekDays.map((day, index) => (
+                      <button
+                        key={index}
+                        onClick={() => setSelectedDayIndex(index)}
+                        className={`flex flex-col items-center py-1.5 px-1 rounded-lg transition-all flex-1 mx-0.5 ${
+                          selectedDayIndex === index 
+                            ? 'bg-blue-500 text-white shadow-md' 
+                            : day.isToday 
+                              ? 'bg-blue-100 text-blue-700' 
+                              : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                      >
+                        <span className="text-[10px] font-medium uppercase">{day.dayName}</span>
+                        <span className={`text-sm font-bold ${selectedDayIndex === index ? 'text-white' : ''}`}>
+                          {day.dayNumber}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Zones de swipe pour mobile - permettent de swiper même sur jours fermés */}
+              {isMobileAgendaView && calendarView === "timeGridWeek" && (
+                <>
+                  {/* Zone de swipe gauche (bord de l'écran) */}
+                  <div 
+                    className="fixed left-0 top-1/4 w-6 h-1/2 z-40 sm:hidden"
+                    style={{ touchAction: 'pan-y' }}
+                    onTouchStart={handleMobileDaySwipeStart}
+                    onTouchMove={(e) => {
+                      handleMobileDaySwipeMove(e)
+                      if (isMobileDaySwiping) e.preventDefault()
+                    }}
+                    onTouchEnd={handleMobileDaySwipeEnd}
+                  />
+                  {/* Zone de swipe droite (bord de l'écran) */}
+                  <div 
+                    className="fixed right-0 top-1/4 w-6 h-1/2 z-40 sm:hidden"
+                    style={{ touchAction: 'pan-y' }}
+                    onTouchStart={handleMobileDaySwipeStart}
+                    onTouchMove={(e) => {
+                      handleMobileDaySwipeMove(e)
+                      if (isMobileDaySwiping) e.preventDefault()
+                    }}
+                    onTouchEnd={handleMobileDaySwipeEnd}
+                  />
+                </>
+              )}
+
+              {/* Zone de swipe pour changer de jour - sous le calendrier sur mobile */}
+              {isMobileAgendaView && calendarView === "timeGridWeek" && (
+                <div 
+                  className="sm:hidden h-12 bg-gradient-to-r from-blue-50 via-white to-blue-50 border border-gray-200 rounded-lg mt-2 flex items-center justify-center text-gray-400 text-xs"
+                  style={{ touchAction: 'pan-y' }}
+                  onTouchStart={handleMobileDaySwipeStart}
+                  onTouchMove={(e) => {
+                    handleMobileDaySwipeMove(e)
+                    if (isMobileDaySwiping) e.preventDefault()
+                  }}
+                  onTouchEnd={handleMobileDaySwipeEnd}
+                >
+                  <span className="flex items-center gap-2">
+                    <ChevronLeft className="w-4 h-4" />
+                    {t('admin.agenda.swipeToNavigate') || 'Glisser pour changer de jour'}
+                    <ChevronRight className="w-4 h-4" />
+                  </span>
+                </div>
+              )}
+
+              {/* Calendrier - Wrapper */}
               <div 
-                className={`bg-white border border-gray-200 rounded-lg overflow-hidden ${editMode === "eraser" ? "eraser-mode" : ""}`}
+                className={`relative bg-white border border-gray-200 rounded-lg overflow-hidden ${editMode === "eraser" ? "eraser-mode" : ""} ${isMobileDaySwiping ? 'select-none pointer-events-none' : ''}`}
+                style={{
+                  transform: isMobileAgendaView && calendarView === "timeGridWeek" ? `translateX(${mobileDaySwipeOffset * 0.3}px)` : undefined,
+                  transition: isMobileDaySwiping ? 'none' : 'transform 0.2s ease-out',
+                  minHeight: isMobileAgendaView ? '50vh' : undefined,
+                  // Bloquer le scroll de la page en mode édition sur mobile pour permettre la sélection
+                  touchAction: isMobileAgendaView && agendaMode === "edit" ? 'none' : undefined
+                }}
                 onMouseDown={(e) => {
                   if (editMode === "eraser") {
                     if (e.button === 0) {
@@ -2756,6 +3862,20 @@ export default function AdminPage() {
                   .fc-col-header-cell.fc-day-today {
                     background-color: #dbeafe !important;
                   }
+                  /* Ghost/Preview pendant le drag/resize */
+                  .fc-event-dragging {
+                    opacity: 0.5;
+                  }
+                  .fc-event-mirror {
+                    opacity: 0.8 !important;
+                    border: 3px dashed #3b82f6 !important;
+                    background: rgba(59, 130, 246, 0.3) !important;
+                    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4) !important;
+                  }
+                  .fc-event-resizing {
+                    opacity: 0.7;
+                    border: 2px dashed #10b981 !important;
+                  }
                   /* Style pour les jours fermés (background events) */
                   .fc-bg-event {
                     opacity: 0.6 !important;
@@ -2810,12 +3930,40 @@ export default function AdminPage() {
                   .fc-daygrid-day.fc-day-other:hover {
                     opacity: 0.8;
                   }
+                  /* Vue Mois sur mobile - affichage ultra compact */
+                  @media (max-width: 640px) {
+                    .fc-dayGridMonth-view .fc-col-header-cell {
+                      padding: 4px 0 !important;
+                      font-size: 9px !important;
+                      font-weight: 600 !important;
+                    }
+                    .fc-dayGridMonth-view .fc-daygrid-day {
+                      min-height: 52px !important;
+                      max-height: 70px !important;
+                    }
+                    .fc-dayGridMonth-view .fc-daygrid-day-frame {
+                      min-height: 52px !important;
+                      padding: 0 !important;
+                    }
+                    .fc-dayGridMonth-view .fc-daygrid-day-top {
+                      display: none !important; /* On gère le numéro nous-mêmes */
+                    }
+                    .fc-dayGridMonth-view .fc-daygrid-day-events {
+                      display: none !important; /* Pas d'événements sur mobile */
+                    }
+                    .fc-dayGridMonth-view .fc-scrollgrid-sync-table {
+                      border-collapse: collapse !important;
+                    }
+                    .fc-dayGridMonth-view td.fc-daygrid-day {
+                      border: 1px solid #e5e7eb !important;
+                    }
+                  }
                 `}</style>
                 <FullCalendar
-                  key={`${calendarView}-${calendarDate.toISOString().split('T')[0]}-${i18n.language}-${slots.length}-${unpublishedCount}-${outsideHoursCount}-${pendingDeletionCount}-${unpublishedClosuresCount}-${pendingClosureDeletionCount}`}
+                  key={`${effectiveCalendarView}-${effectiveCalendarDate.toISOString().split('T')[0]}-${i18n.language}-${slots.length}-${unpublishedCount}-${outsideHoursCount}-${pendingDeletionCount}-${unpublishedClosuresCount}-${pendingClosureDeletionCount}-${selectedSportFilter}-${selectedDayIndex}`}
                   plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
-                  initialView={calendarView}
-                  initialDate={calendarDate}
+                  initialView={effectiveCalendarView}
+                  initialDate={effectiveCalendarDate}
                   events={allCalendarEvents}
                   headerToolbar={false}
                   height="auto"
@@ -2823,18 +3971,27 @@ export default function AdminPage() {
                   slotMaxTime={slotMaxTime}
                   slotDuration={slotDurationStep}
                   allDaySlot={false}
-                  selectable={agendaMode === "edit" && calendarView === "timeGridWeek"}
-                  selectMirror={agendaMode === "edit" && editMode === "slot" && calendarView === "timeGridWeek"}
-                  editable={agendaMode === "edit" && editMode === "slot" && calendarView === "timeGridWeek"}
+                  selectable={agendaMode === "edit" && (calendarView === "timeGridWeek" || effectiveCalendarView === "timeGridDay")}
+                  selectMirror={agendaMode === "edit" && editMode === "slot" && (calendarView === "timeGridWeek" || effectiveCalendarView === "timeGridDay")}
+                  editable={agendaMode === "edit" && editMode === "slot" && (calendarView === "timeGridWeek" || effectiveCalendarView === "timeGridDay")}
                   eventResizableFromStart={true}
                   eventDisplay="auto"
-                  eventTimeFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
-                  slotLabelFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
+                  dragScroll={true}
+                  eventDragMinDistance={5}
+                  snapDuration="01:00:00"
+                  slotEventOverlap={false}
+                  eventMaxStack={3}
+                  eventTimeFormat={{ hour: "2-digit", minute: "2-digit", hour12: settings.branding?.timeFormat === "12h" }}
+                  slotLabelFormat={{ hour: "2-digit", minute: "2-digit", hour12: settings.branding?.timeFormat === "12h" }}
                   firstDay={1}
                   nowIndicator
                   expandRows
                   businessHours={businessHours}
-                  selectConstraint="businessHours"
+                  selectConstraint={editMode === "closure" ? undefined : "businessHours"}
+                  eventConstraint="businessHours"
+                  longPressDelay={50}
+                  selectLongPressDelay={50}
+                  eventLongPressDelay={200}
                   select={handleCalendarSelect}
                   eventClick={handleCalendarEventClick}
                   eventDrop={handleCalendarEventDrop}
@@ -2855,116 +4012,186 @@ export default function AdminPage() {
                     // Vider le contenu existant
                     arg.el.innerHTML = ''
                     
+                    // Détecter si on est sur mobile
+                    const isMobile = window.innerWidth < 640
+                    
                     // Créer le conteneur principal
                     const container = document.createElement('div')
                     const isUnavailable = isClosed || hasNoWorkingHours
-                    container.className = `w-full h-full flex flex-col cursor-pointer transition-colors ${isUnavailable ? 'bg-gray-100' : 'hover:bg-gray-50'}`
-                    container.style.minHeight = '100px'
-                    if (hasNoWorkingHours && !isClosed) {
-                      // Style barré pour les jours sans horaires
-                      container.style.background = 'repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(156, 163, 175, 0.15) 10px, rgba(156, 163, 175, 0.15) 20px)'
-                    }
                     
-                    // Header avec numéro du jour
-                    const header = document.createElement('div')
-                    header.className = 'flex justify-between items-start p-2'
-                    
-                    const dayNumber = document.createElement('span')
-                    if (isToday) {
-                      dayNumber.className = 'text-sm font-bold bg-blue-600 text-white w-7 h-7 rounded-full flex items-center justify-center shadow-md'
+                    if (isMobile) {
+                      // === VERSION MOBILE : Ultra compact ===
+                      container.className = `w-full h-full flex flex-col items-center cursor-pointer p-1 ${isUnavailable ? 'bg-gray-100' : 'hover:bg-gray-50'}`
+                      container.style.minHeight = '50px'
+                      if (hasNoWorkingHours && !isClosed) {
+                        container.style.background = 'repeating-linear-gradient(135deg, transparent, transparent 5px, rgba(156, 163, 175, 0.1) 5px, rgba(156, 163, 175, 0.1) 10px)'
+                      }
+                      
+                      // Numéro du jour
+                      const dayNumber = document.createElement('span')
+                      if (isToday) {
+                        dayNumber.className = 'text-[11px] font-bold bg-blue-600 text-white w-5 h-5 rounded-full flex items-center justify-center'
+                      } else {
+                        dayNumber.className = `text-[11px] font-medium ${isUnavailable ? 'text-gray-400' : 'text-gray-700'}`
+                      }
+                      dayNumber.textContent = arg.dayNumberText.replace('日', '')
+                      container.appendChild(dayNumber)
+                      
+                      // Badge de statut
+                      if (isClosed) {
+                        const badge = document.createElement('div')
+                        badge.className = 'mt-1 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full'
+                        badge.textContent = '✕'
+                        container.appendChild(badge)
+                      } else if (hasSlots && !hasNoWorkingHours) {
+                        const badge = document.createElement('div')
+                        // Calcul du taux de remplissage
+                        const mobileFillRate = dayStats!.capacity > 0 ? Math.round((dayStats!.bookings / dayStats!.capacity) * 100) : 0
+                        const isMobileFull = mobileFillRate >= 100
+                        
+                        // Couleur selon statut
+                        let bgColor = 'bg-blue-500' // Publiés
+                        if (isMobileFull) bgColor = 'bg-rose-700' // Journée complète = rouge foncé
+                        else if (dayStats!.outsideHours > 0) bgColor = 'bg-red-500'
+                        else if (dayStats!.unpublished > 0 && dayStats!.published === 0) bgColor = 'bg-orange-500'
+                        else if (dayStats!.unpublished > 0) bgColor = 'bg-gradient-to-r from-orange-500 to-blue-500'
+                        
+                        badge.className = `mt-1 ${bgColor} text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center`
+                        badge.textContent = isMobileFull ? '✓' : String(dayStats!.slots)
+                        container.appendChild(badge)
+                        
+                        // Petit indicateur de réservations si présentes (sauf si complet)
+                        if (dayStats!.bookings > 0 && !isMobileFull) {
+                          const bookingDot = document.createElement('div')
+                          bookingDot.className = 'mt-0.5 text-[8px] text-green-600 font-bold'
+                          bookingDot.textContent = `${dayStats!.bookings}👤`
+                          container.appendChild(bookingDot)
+                        }
+                      } else if (!hasNoWorkingHours) {
+                        // Jour ouvert sans créneaux
+                        const dash = document.createElement('span')
+                        dash.className = 'mt-1 text-gray-300 text-[10px]'
+                        dash.textContent = '—'
+                        container.appendChild(dash)
+                      }
                     } else {
-                      dayNumber.className = 'text-sm font-bold text-gray-700'
-                    }
-                    dayNumber.textContent = arg.dayNumberText.replace('日', '')
-                    header.appendChild(dayNumber)
-                    
-                    if (isClosed) {
-                      const closedIcon = document.createElement('span')
-                      closedIcon.className = 'text-lg'
-                      closedIcon.textContent = '🚫'
-                      header.appendChild(closedIcon)
-                    } else if (hasSlots) {
-                      const slotsIcon = document.createElement('span')
-                      slotsIcon.className = 'text-lg'
-                      slotsIcon.textContent = '📅'
-                      header.appendChild(slotsIcon)
-                    }
-                    
-                    container.appendChild(header)
-                    
-                    // Contenu selon l'état
-                    const content = document.createElement('div')
-                    content.className = 'flex-1 px-2 pb-2'
-                    
-                    if (hasSlots && !isClosed && !hasNoWorkingHours) {
-                      // Déterminer la couleur dominante selon les créneaux
-                      let bgClass = 'from-blue-500 to-blue-600' // Par défaut bleu (publiés)
-                      let hasWarning = false
-                      
-                      if (dayStats.outsideHours > 0) {
-                        // Rouge si au moins un créneau hors horaires
-                        bgClass = 'from-red-500 to-red-600'
-                        hasWarning = true
-                      } else if (dayStats.unpublished > 0 && dayStats.published === 0) {
-                        // Orange si tous non publiés
-                        bgClass = 'from-orange-500 to-orange-600'
-                      } else if (dayStats.unpublished > 0) {
-                        // Dégradé orange-bleu si mélangé
-                        bgClass = 'from-orange-500 to-blue-600'
+                      // === VERSION DESKTOP : Complète et détaillée ===
+                      container.className = `w-full h-full flex flex-col cursor-pointer transition-colors ${isUnavailable ? 'bg-gray-100' : 'hover:bg-gray-50'}`
+                      container.style.minHeight = '120px'
+                      if (hasNoWorkingHours && !isClosed) {
+                        container.style.background = 'repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(156, 163, 175, 0.15) 10px, rgba(156, 163, 175, 0.15) 20px)'
                       }
                       
-                      const statsBox = document.createElement('div')
-                      statsBox.className = `bg-gradient-to-br ${bgClass} rounded-lg p-2 text-xs shadow-sm`
-                      const slotText = dayStats.slots > 1 ? t('admin.agenda.slotsCount') : t('admin.agenda.slotCount')
-                      const bookingsText = t('admin.slots.bookings')
+                      // Header avec numéro du jour
+                      const header = document.createElement('div')
+                      header.className = 'flex justify-between items-start p-2'
                       
-                      // Indicateurs de statut
-                      let statusIndicators = ''
-                      if (dayStats.outsideHours > 0) {
-                        statusIndicators += `<span class="bg-white/30 px-1 rounded">⚠️ ${dayStats.outsideHours}</span> `
+                      const dayNumber = document.createElement('span')
+                      if (isToday) {
+                        dayNumber.className = 'text-sm font-bold bg-blue-600 text-white w-7 h-7 rounded-full flex items-center justify-center shadow-md'
+                      } else {
+                        dayNumber.className = 'text-sm font-bold text-gray-700'
                       }
-                      if (dayStats.unpublished > 0) {
-                        statusIndicators += `<span class="bg-white/30 px-1 rounded">🟠 ${dayStats.unpublished}</span> `
-                      }
-                      if (dayStats.published > 0) {
-                        statusIndicators += `<span class="bg-white/30 px-1 rounded">🔵 ${dayStats.published}</span>`
+                      dayNumber.textContent = arg.dayNumberText.replace('日', '')
+                      header.appendChild(dayNumber)
+                      
+                      // Badges de statut en haut à droite
+                      if (hasSlots && !isClosed && !hasNoWorkingHours) {
+                        const statusBadges = document.createElement('div')
+                        statusBadges.className = 'flex gap-1'
+                        if (dayStats!.outsideHours > 0) {
+                          statusBadges.innerHTML += `<span class="bg-red-100 text-red-700 text-[10px] px-1.5 py-0.5 rounded-full font-medium" title="${t('admin.settings.slotsOutsideHours')}">⚠️${dayStats!.outsideHours}</span>`
+                        }
+                        if (dayStats!.unpublished > 0) {
+                          statusBadges.innerHTML += `<span class="bg-orange-100 text-orange-700 text-[10px] px-1.5 py-0.5 rounded-full font-medium" title="${t('admin.agenda.unpublished')}">🟠${dayStats!.unpublished}</span>`
+                        }
+                        if (dayStats!.published > 0) {
+                          statusBadges.innerHTML += `<span class="bg-blue-100 text-blue-700 text-[10px] px-1.5 py-0.5 rounded-full font-medium" title="${t('admin.agenda.published')}">🔵${dayStats!.published}</span>`
+                        }
+                        header.appendChild(statusBadges)
+                      } else if (isClosed) {
+                        const closedIcon = document.createElement('span')
+                        closedIcon.className = 'text-lg'
+                        closedIcon.textContent = '🚫'
+                        header.appendChild(closedIcon)
                       }
                       
-                      statsBox.innerHTML = `
-                        <div class="flex justify-between items-center text-white">
-                          <span class="font-medium">${dayStats.slots} ${slotText}</span>
-                          <span class="font-bold">${dayStats.hours}h</span>
-                        </div>
-                        <div class="flex gap-1 mt-1 text-[10px]">${statusIndicators}</div>
-                        ${dayStats.bookings > 0 ? `
-                          <div class="flex justify-between items-center text-white/80 mt-1">
-                            <span>${dayStats.bookings} ${bookingsText}</span>
-                            <span class="font-semibold text-white">${dayStats.revenue} ${settings.branding?.currency || "CHF"}</span>
+                      container.appendChild(header)
+                      
+                      // Contenu selon l'état
+                      const content = document.createElement('div')
+                      content.className = 'flex-1 px-2 pb-2'
+                      
+                      if (hasSlots && !isClosed && !hasNoWorkingHours) {
+                        // Calcul du taux de remplissage
+                        const fillRate = dayStats!.capacity > 0 ? Math.round((dayStats!.bookings / dayStats!.capacity) * 100) : 0
+                        const isFull = fillRate >= 100
+                        
+                        // Couleur de fond selon statut
+                        let bgClass = 'from-blue-500 to-blue-600'
+                        if (isFull) bgClass = 'from-rose-700 to-rose-800' // Journée complète = rouge foncé
+                        else if (dayStats!.outsideHours > 0) bgClass = 'from-red-500 to-red-600'
+                        else if (dayStats!.unpublished > 0 && dayStats!.published === 0) bgClass = 'from-orange-500 to-orange-600'
+                        else if (dayStats!.unpublished > 0) bgClass = 'from-orange-500 to-blue-600'
+                        
+                        const statsBox = document.createElement('div')
+                        statsBox.className = `bg-gradient-to-br ${bgClass} rounded-xl p-2.5 text-xs shadow-md`
+                        
+                        const slotText = dayStats!.slots > 1 ? t('admin.agenda.slotsCount') : t('admin.agenda.slotCount')
+                        const bookingsText = t('admin.slots.bookings')
+                        
+                        statsBox.innerHTML = `
+                          <div class="flex justify-between items-center text-white mb-1.5">
+                            <span class="font-semibold text-sm">${dayStats!.slots} ${slotText}</span>
+                            <span class="font-bold text-sm bg-white/20 px-2 py-0.5 rounded">${dayStats!.hours}h</span>
                           </div>
-                        ` : ''}
-                      `
-                      content.appendChild(statsBox)
-                    } else if (isClosed) {
-                      const closedBox = document.createElement('div')
-                      closedBox.className = 'bg-gradient-to-br from-red-500 to-red-600 rounded-lg p-2 text-xs text-white font-bold text-center shadow-sm'
-                      closedBox.textContent = t('admin.agenda.closed')
-                      content.appendChild(closedBox)
-                    } else if (hasNoWorkingHours) {
-                      // Jour sans horaires : juste un tiret grisé (le fond rayé est déjà appliqué)
-                      const noHoursBox = document.createElement('div')
-                      noHoursBox.className = 'border-2 border-dashed border-gray-300 rounded-lg p-2 text-xs text-gray-400 text-center flex items-center justify-center'
-                      noHoursBox.style.height = '40px'
-                      noHoursBox.textContent = '—'
-                      content.appendChild(noHoursBox)
-                    } else {
-                      const emptyBox = document.createElement('div')
-                      emptyBox.className = 'border-2 border-dashed border-gray-200 rounded-lg p-2 text-xs text-gray-400 text-center flex items-center justify-center'
-                      emptyBox.style.height = '40px'
-                      emptyBox.textContent = '—'
-                      content.appendChild(emptyBox)
+                          <div class="grid grid-cols-2 gap-1.5 text-white/90">
+                            <div class="bg-white/15 rounded-lg px-2 py-1 text-center">
+                              <div class="text-[10px] opacity-80">${bookingsText}</div>
+                              <div class="font-bold text-sm">${dayStats!.bookings}/${dayStats!.capacity}</div>
+                            </div>
+                            <div class="bg-white/15 rounded-lg px-2 py-1 text-center">
+                              <div class="text-[10px] opacity-80">${t('admin.agenda.statsPage.kpis.fillRate')}</div>
+                              <div class="font-bold text-sm">${fillRate}%</div>
+                            </div>
+                          </div>
+                          ${dayStats!.revenue > 0 ? `
+                            <div class="mt-1.5 bg-white/20 rounded-lg px-2 py-1 flex justify-between items-center">
+                              <span class="text-white/80 text-[10px]">${t('admin.agenda.statsPage.kpis.revenue')}</span>
+                              <span class="font-bold text-white text-sm">${dayStats!.revenue} ${settings.branding?.currency || "CHF"}</span>
+                            </div>
+                          ` : ''}
+                        `
+                        content.appendChild(statsBox)
+                      } else if (isClosed) {
+                        const closedBox = document.createElement('div')
+                        closedBox.className = 'bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-3 text-white font-bold text-center shadow-md'
+                        closedBox.innerHTML = `
+                          <div class="text-2xl mb-1">🚫</div>
+                          <div class="text-sm">${t('admin.agenda.closed')}</div>
+                        `
+                        content.appendChild(closedBox)
+                      } else if (hasNoWorkingHours) {
+                        const noHoursBox = document.createElement('div')
+                        noHoursBox.className = 'border-2 border-dashed border-gray-300 rounded-xl p-3 text-gray-400 text-center flex flex-col items-center justify-center h-full'
+                        noHoursBox.innerHTML = `
+                          <div class="text-xl mb-1">📅</div>
+                          <div class="text-xs">${t('admin.agenda.notWorking')}</div>
+                        `
+                        content.appendChild(noHoursBox)
+                      } else {
+                        const emptyBox = document.createElement('div')
+                        emptyBox.className = 'border-2 border-dashed border-gray-200 rounded-xl p-3 text-gray-300 text-center flex flex-col items-center justify-center h-full hover:border-blue-300 hover:bg-blue-50/50 transition-colors'
+                        emptyBox.innerHTML = `
+                          <div class="text-xl mb-1">➕</div>
+                          <div class="text-xs">${t('admin.agenda.clickToAdd')}</div>
+                        `
+                        content.appendChild(emptyBox)
+                      }
+                      
+                      container.appendChild(content)
                     }
                     
-                    container.appendChild(content)
                     arg.el.appendChild(container)
                   }}
                   eventResize={handleCalendarEventResize}
@@ -2984,7 +4211,13 @@ export default function AdminPage() {
                   eventContent={renderEventContent}
                   locale={i18n.language}
                   droppable={false}
-                  eventOverlap={false}
+                  eventOverlap={(stillEvent, movingEvent) => {
+                    // Permettre le chevauchement si les sports sont différents
+                    const stillSportId = stillEvent?.extendedProps?.sportId
+                    const movingSportId = movingEvent?.extendedProps?.sportId
+                    // Si les sports sont différents, autoriser le chevauchement
+                    return stillSportId !== movingSportId
+                  }}
                   selectOverlap={false}
                   weekends
                   navLinks={true}
@@ -3262,6 +4495,169 @@ export default function AdminPage() {
                           className="flex-1 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700"
                         >
                           ⚡ {t('admin.generate.generate')}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Dialog de création de créneau (choix des sports) */}
+              {createSlotDialog.isOpen && (
+                <div 
+                  className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+                  onClick={() => setCreateSlotDialog({ ...createSlotDialog, isOpen: false })}
+                >
+                  <div 
+                    className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-200"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
+                        <Plus className="w-6 h-6 text-white" />
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-bold text-gray-900">{t('admin.slots.createSlot')}</h2>
+                        <p className="text-sm text-gray-500">{createSlotDialog.date} • {createSlotDialog.time}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <Label className="text-sm font-medium text-gray-700 mb-2 block">🏆 {t('admin.slots.selectSports')}</Label>
+                        <p className="text-xs text-gray-500 mb-3">{t('admin.slots.selectSportsDesc')}</p>
+                        <div className="grid grid-cols-2 gap-2 max-h-[200px] overflow-y-auto">
+                          {sports.filter(s => s.enabled).map((sport) => (
+                            <button
+                              key={sport.id}
+                              onClick={() => {
+                                const newSelectedSports = createSlotDialog.selectedSports.includes(sport.id)
+                                  ? createSlotDialog.selectedSports.filter(id => id !== sport.id)
+                                  : [...createSlotDialog.selectedSports, sport.id]
+                                setCreateSlotDialog({ ...createSlotDialog, selectedSports: newSelectedSports })
+                              }}
+                              className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-all ${
+                                createSlotDialog.selectedSports.includes(sport.id)
+                                  ? "bg-blue-100 text-blue-800 border-2 border-blue-400"
+                                  : "bg-gray-50 text-gray-700 border-2 border-gray-200 hover:bg-gray-100"
+                              }`}
+                            >
+                              <span className="text-lg">{sport.icon}</span>
+                              <span className="font-medium truncate">{sport.name}</span>
+                              {createSlotDialog.selectedSports.includes(sport.id) && (
+                                <span className="ml-auto text-blue-600">✓</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Prix et Capacité */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">💰 {t('admin.slots.price')} ({settings.branding?.currency || "CHF"})</Label>
+                          <Input
+                            type="number"
+                            value={createSlotDialog.price}
+                            onChange={(e) => setCreateSlotDialog({ ...createSlotDialog, price: Number(e.target.value) })}
+                            className="h-10"
+                          />
+                          <div className="flex gap-1 mt-2">
+                            {[30, 50, 80, 100].map((p) => (
+                              <button
+                                key={p}
+                                onClick={() => setCreateSlotDialog({ ...createSlotDialog, price: p })}
+                                className={`flex-1 text-xs py-1.5 rounded-lg border-2 font-medium transition-all ${
+                                  createSlotDialog.price === p
+                                    ? "bg-blue-600 text-white border-blue-600"
+                                    : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-blue-50"
+                                }`}
+                              >
+                                {p}.-
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <Label className="text-sm font-medium text-gray-700 mb-2 block">👥 {t('admin.slots.maxCapacity')}</Label>
+                          <Input
+                            type="number"
+                            value={createSlotDialog.maxCapacity}
+                            onChange={(e) => setCreateSlotDialog({ ...createSlotDialog, maxCapacity: Number(e.target.value) })}
+                            className="h-10"
+                          />
+                          <div className="flex gap-1 mt-2">
+                            {[2, 4, 6, 8].map((c) => (
+                              <button
+                                key={c}
+                                onClick={() => setCreateSlotDialog({ ...createSlotDialog, maxCapacity: c })}
+                                className={`flex-1 text-xs py-1.5 rounded-lg border-2 font-medium transition-all ${
+                                  createSlotDialog.maxCapacity === c
+                                    ? "bg-blue-600 text-white border-blue-600"
+                                    : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-blue-50"
+                                }`}
+                              >
+                                {c}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Durée */}
+                      <div>
+                        <Label className="text-sm font-medium text-gray-700 mb-2 block">⏱️ {t('admin.slots.duration')}</Label>
+                        <select
+                          value={createSlotDialog.duration}
+                          onChange={(e) => setCreateSlotDialog({ ...createSlotDialog, duration: Number(e.target.value) })}
+                          className="w-full h-11 px-3 font-medium rounded-lg border-2 border-gray-200 focus:border-blue-400 focus:outline-none bg-white mb-2"
+                        >
+                          {Array.from({ length: 24 }, (_, i) => i + 1).map((h) => (
+                            <option key={h} value={h * 60}>{h}h</option>
+                          ))}
+                        </select>
+                        <div className="flex gap-2">
+                          {[1, 2, 3, 4, 6, 8].map((h) => (
+                            <button
+                              key={h}
+                              onClick={() => setCreateSlotDialog({ ...createSlotDialog, duration: h * 60 })}
+                              className={`flex-1 py-2 text-sm rounded-lg border-2 font-medium transition-all ${
+                                createSlotDialog.duration === h * 60
+                                  ? "bg-blue-600 text-white border-blue-600"
+                                  : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-blue-50"
+                              }`}
+                            >
+                              {h}h
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Résumé */}
+                      {createSlotDialog.selectedSports.length > 0 && (
+                        <div className="p-3 rounded-lg bg-blue-50 border border-blue-200">
+                          <p className="text-sm text-blue-800">
+                            <span className="font-medium">📊</span> {createSlotDialog.selectedSports.length} {createSlotDialog.selectedSports.length > 1 ? t('admin.slots.slotsWillBeCreated') : t('admin.slots.slotWillBeCreated')}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Actions */}
+                      <div className="flex gap-3 pt-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setCreateSlotDialog({ ...createSlotDialog, isOpen: false })}
+                          className="flex-1"
+                        >
+                          {t('common.cancel')}
+                        </Button>
+                        <Button 
+                          onClick={confirmCreateSlots}
+                          disabled={createSlotDialog.selectedSports.length === 0}
+                          className="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
+                        >
+                          ✓ {t('common.create')}
                         </Button>
                       </div>
                     </div>
@@ -3592,7 +4988,7 @@ export default function AdminPage() {
               )}
             </TabsContent>
 
-            <TabsContent value="slots" className="space-y-6">
+            <TabsContent value="slots" className="space-y-6 pt-4">
               {/* Header avec titre */}
               <div className="flex items-center justify-between">
                 <div>
@@ -4308,7 +5704,7 @@ export default function AdminPage() {
                         <Button
                           onClick={async () => {
                             if (!settings.smtp?.host || !settings.smtp?.user || !settings.smtp?.password || !settings.smtp?.fromEmail) {
-                              await showAlert('Veuillez remplir tous les champs de configuration SMTP', { variant: 'warning' })
+                              await showAlert(t('admin.settings.smtp.fillAllFields'), { variant: 'warning' })
                               return
                             }
                             
@@ -4468,12 +5864,12 @@ export default function AdminPage() {
                                 setTimeout(() => setSmtpTestStatus('idle'), 3000)
                               } else {
                                 setSmtpTestStatus('error')
-                                await showAlert(`Erreur: ${data.error}`, { variant: 'error' })
+                                await showAlert(`${t('common.error')}: ${data.error}`, { variant: 'error' })
                                 setTimeout(() => setSmtpTestStatus('idle'), 3000)
                               }
                             } catch (error) {
                               setSmtpTestStatus('error')
-                              await showAlert(`Erreur: ${error instanceof Error ? error.message : 'Erreur inconnue'}`, { variant: 'error' })
+                              await showAlert(`${t('common.error')}: ${error instanceof Error ? error.message : t('common.unknownError')}`, { variant: 'error' })
                               setTimeout(() => setSmtpTestStatus('idle'), 3000)
                             }
                           }}
@@ -5039,11 +6435,38 @@ export default function AdminPage() {
                                 <path fill="#C8102E" d="M0 193v96h640v-96H0zM273 0v480h96V0h-96z"/>
                               </svg>
                             )}
-                            {(settings.branding?.defaultLanguage === 'de' || !settings.branding?.defaultLanguage) && settings.branding?.defaultLanguage !== 'fr' && settings.branding?.defaultLanguage !== 'en' && (
+                            {settings.branding?.defaultLanguage === 'de' && (
                               <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
                                 <path fill="#000" d="M0 0h640v160H0z"/>
                                 <path fill="#D00" d="M0 160h640v160H0z"/>
                                 <path fill="#FFCE00" d="M0 320h640v160H0z"/>
+                              </svg>
+                            )}
+                            {settings.branding?.defaultLanguage === 'es' && (
+                              <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                <path fill="#AA151B" d="M0 0h640v480H0z"/>
+                                <path fill="#F1BF00" d="M0 120h640v240H0z"/>
+                              </svg>
+                            )}
+                            {settings.branding?.defaultLanguage === 'it' && (
+                              <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                <path fill="#009246" d="M0 0h213.3v480H0z"/>
+                                <path fill="#fff" d="M213.3 0h213.4v480H213.3z"/>
+                                <path fill="#ce2b37" d="M426.7 0H640v480H426.7z"/>
+                              </svg>
+                            )}
+                            {settings.branding?.defaultLanguage === 'pt' && (
+                              <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                <path fill="#006600" d="M0 0h256v480H0z"/>
+                                <path fill="#FF0000" d="M256 0h384v480H256z"/>
+                                <circle fill="#FFCC00" cx="256" cy="240" r="80"/>
+                              </svg>
+                            )}
+                            {settings.branding?.defaultLanguage === 'nl' && (
+                              <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                <path fill="#21468B" d="M0 0h640v480H0z"/>
+                                <path fill="#FFF" d="M0 0h640v320H0z"/>
+                                <path fill="#AE1C28" d="M0 0h640v160H0z"/>
                               </svg>
                             )}
                             {!settings.branding?.defaultLanguage && (
@@ -5084,6 +6507,33 @@ export default function AdminPage() {
                                   <path fill="#FFCE00" d="M0 320h640v160H0z"/>
                                 </svg>
                               )}
+                              {lang.code === 'es' && (
+                                <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                  <path fill="#AA151B" d="M0 0h640v480H0z"/>
+                                  <path fill="#F1BF00" d="M0 120h640v240H0z"/>
+                                </svg>
+                              )}
+                              {lang.code === 'it' && (
+                                <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                  <path fill="#009246" d="M0 0h213.3v480H0z"/>
+                                  <path fill="#fff" d="M213.3 0h213.4v480H213.3z"/>
+                                  <path fill="#ce2b37" d="M426.7 0H640v480H426.7z"/>
+                                </svg>
+                              )}
+                              {lang.code === 'pt' && (
+                                <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                  <path fill="#006600" d="M0 0h256v480H0z"/>
+                                  <path fill="#FF0000" d="M256 0h384v480H256z"/>
+                                  <circle fill="#FFCC00" cx="256" cy="240" r="80"/>
+                                </svg>
+                              )}
+                              {lang.code === 'nl' && (
+                                <svg className="w-5 h-4 rounded-sm shadow-sm" viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+                                  <path fill="#21468B" d="M0 0h640v480H0z"/>
+                                  <path fill="#FFF" d="M0 0h640v320H0z"/>
+                                  <path fill="#AE1C28" d="M0 0h640v160H0z"/>
+                                </svg>
+                              )}
                               {lang.name}
                             </span>
                           </SelectItem>
@@ -5092,6 +6542,44 @@ export default function AdminPage() {
                     </Select>
                     <p className="text-xs text-gray-500 mt-1">
                       {t('admin.settings.language.description')}
+                    </p>
+                  </div>
+
+                  {/* Format d'heure */}
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700 mb-2 block">🕐 {t('admin.settings.timeFormat.title')}</Label>
+                    <Select
+                      value={settings.branding?.timeFormat || "24h"}
+                      onValueChange={(value: "24h" | "12h") => {
+                        const newSettings = { 
+                          ...settings, 
+                          branding: { 
+                            ...settings.branding, 
+                            timeFormat: value
+                          } 
+                        }
+                        setSettingsState(newSettings)
+                        saveSettings(newSettings)
+                      }}
+                    >
+                      <SelectTrigger className="h-11">
+                        <SelectValue>
+                          <span className="flex items-center gap-2">
+                            {settings.branding?.timeFormat === "12h" ? "🕐 12h (AM/PM)" : "🕐 24h"}
+                          </span>
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="24h">
+                          <span className="flex items-center gap-2">🕐 24h (14:00, 18:30)</span>
+                        </SelectItem>
+                        <SelectItem value="12h">
+                          <span className="flex items-center gap-2">🕐 12h AM/PM (2:00 PM, 6:30 PM)</span>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {t('admin.settings.timeFormat.description')}
                     </p>
                   </div>
 
@@ -5158,7 +6646,7 @@ export default function AdminPage() {
 
             </TabsContent>
 
-            <TabsContent value="sports" className="space-y-6">
+            <TabsContent value="sports" className="space-y-6 pt-4">
               {/* Header */}
               <div className="flex items-center justify-between">
                 <div>
@@ -5264,6 +6752,591 @@ export default function AdminPage() {
                   <span className="font-medium text-gray-500 group-hover:text-blue-600">{t('admin.sports.add')}</span>
                 </button>
               </div>
+            </TabsContent>
+
+            {/* Onglet Statistiques */}
+            <TabsContent value="stats" className="space-y-6 pt-4">
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
+                    <BarChart3 className="w-6 h-6 text-blue-600" />
+                    {t('admin.agenda.statsPage.title')}
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-1">{t('admin.agenda.statsPage.subtitle')}</p>
+                </div>
+                <div className="flex gap-2 self-start sm:self-auto">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      // Pré-remplir avec les valeurs actuelles
+                      setExportOptions({
+                        ...exportOptions,
+                        period: "current",
+                        customStartDate: statsCustomDateStart,
+                        customEndDate: statsCustomDateEnd,
+                      })
+                      setIsExportDialogOpen(true)
+                    }}
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    {t('admin.agenda.statsPage.export.button')}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      // Force recalcul en changeant légèrement la période
+                      const temp = statsPeriod
+                      setStatsPeriod("custom")
+                      setTimeout(() => setStatsPeriod(temp), 0)
+                    }}
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    {t('admin.agenda.statsPage.refresh')}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Filtres */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-gray-50 p-4 rounded-xl">
+                {/* Filtre Sport */}
+                <div>
+                  <Label className="text-xs text-gray-500 mb-1 block">{t('admin.agenda.statsPage.filters.sport')}</Label>
+                  <Select value={statsSportFilter} onValueChange={setStatsSportFilter}>
+                    <SelectTrigger className="bg-white">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t('admin.agenda.statsPage.filters.allSports')}</SelectItem>
+                      {sports.filter(s => s.enabled).map(sport => (
+                        <SelectItem key={sport.id} value={sport.id}>
+                          <span className="flex items-center gap-2">
+                            <span>{sport.icon}</span>
+                            <span>{sport.name}</span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Filtre Période */}
+                <div>
+                  <Label className="text-xs text-gray-500 mb-1 block">{t('admin.agenda.statsPage.filters.period')}</Label>
+                  <Select value={statsPeriod} onValueChange={setStatsPeriod}>
+                    <SelectTrigger className="bg-white">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="thisWeek">{t('admin.agenda.statsPage.filters.thisWeek')}</SelectItem>
+                      <SelectItem value="lastWeek">{t('admin.agenda.statsPage.filters.lastWeek')}</SelectItem>
+                      <SelectItem value="thisMonth">{t('admin.agenda.statsPage.filters.thisMonth')}</SelectItem>
+                      <SelectItem value="lastMonth">{t('admin.agenda.statsPage.filters.lastMonth')}</SelectItem>
+                      <SelectItem value="last30Days">{t('admin.agenda.statsPage.filters.last30Days')}</SelectItem>
+                      <SelectItem value="last90Days">{t('admin.agenda.statsPage.filters.last90Days')}</SelectItem>
+                      <SelectItem value="thisYear">{t('admin.agenda.statsPage.filters.thisYear')}</SelectItem>
+                      <SelectItem value="custom">{t('admin.agenda.statsPage.filters.custom')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Dates personnalisées */}
+                {statsPeriod === "custom" && (
+                  <>
+                    <div>
+                      <Label className="text-xs text-gray-500 mb-1 block">{t('admin.agenda.statsPage.filters.from')}</Label>
+                      <Input
+                        type="date"
+                        value={statsCustomDateStartInput}
+                        onChange={(e) => setStatsCustomDateStartInput(e.target.value)}
+                        className="bg-white"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500 mb-1 block">{t('admin.agenda.statsPage.filters.to')}</Label>
+                      <Input
+                        type="date"
+                        value={statsCustomDateEndInput}
+                        onChange={(e) => setStatsCustomDateEndInput(e.target.value)}
+                        className="bg-white"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Période affichée */}
+              <div className="text-center text-sm text-gray-500">
+                {detailedStats.startDate.toLocaleDateString(i18n.language, { day: 'numeric', month: 'long', year: 'numeric' })}
+                {' → '}
+                {detailedStats.endDate.toLocaleDateString(i18n.language, { day: 'numeric', month: 'long', year: 'numeric' })}
+              </div>
+
+              {/* KPIs principaux - grille 2x2 sur tablette, 4 colonnes sur grand écran */}
+              <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3">
+                {/* Chiffre d'affaires */}
+                <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 border border-emerald-200 rounded-xl p-2.5 sm:p-3 xl:p-4">
+                  <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 xl:w-10 xl:h-10 bg-emerald-500 rounded-lg flex items-center justify-center">
+                      <DollarSign className="w-3.5 h-3.5 sm:w-4 sm:h-4 xl:w-5 xl:h-5 text-white" />
+                    </div>
+                    <TrendingUp className="w-3 h-3 xl:w-4 xl:h-4 text-emerald-600" />
+                  </div>
+                  <p className="text-base sm:text-lg xl:text-2xl font-bold text-emerald-900 truncate">
+                    {detailedStats.kpis.totalRevenue}{settings.branding?.currencySymbol || '.-'}
+                  </p>
+                  <p className="text-[9px] sm:text-[10px] xl:text-xs text-emerald-600 font-medium">
+                    <span className="xl:hidden">{t('admin.agenda.statsPage.kpis.revenueShort')}</span>
+                    <span className="hidden xl:inline">{t('admin.agenda.statsPage.kpis.revenue')}</span>
+                  </p>
+                </div>
+
+                {/* Réservations */}
+                <div className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-xl p-2.5 sm:p-3 xl:p-4">
+                  <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 xl:w-10 xl:h-10 bg-blue-500 rounded-lg flex items-center justify-center">
+                      <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 xl:w-5 xl:h-5 text-white" />
+                    </div>
+                  </div>
+                  <p className="text-base sm:text-lg xl:text-2xl font-bold text-blue-900">{detailedStats.kpis.totalBookings}</p>
+                  <p className="text-[9px] sm:text-[10px] xl:text-xs text-blue-600 font-medium">
+                    <span className="xl:hidden">{t('admin.agenda.statsPage.kpis.bookingsShort')}</span>
+                    <span className="hidden xl:inline">{t('admin.agenda.statsPage.kpis.bookings')}</span>
+                  </p>
+                </div>
+
+                {/* Clients uniques */}
+                <div className="bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 rounded-xl p-2.5 sm:p-3 xl:p-4">
+                  <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 xl:w-10 xl:h-10 bg-purple-500 rounded-lg flex items-center justify-center">
+                      <UserCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 xl:w-5 xl:h-5 text-white" />
+                    </div>
+                  </div>
+                  <p className="text-base sm:text-lg xl:text-2xl font-bold text-purple-900">{detailedStats.kpis.uniqueClients}</p>
+                  <p className="text-[9px] sm:text-[10px] xl:text-xs text-purple-600 font-medium">
+                    <span className="xl:hidden">{t('admin.agenda.statsPage.kpis.clientsShort')}</span>
+                    <span className="hidden xl:inline">{t('admin.agenda.statsPage.kpis.clients')}</span>
+                  </p>
+                </div>
+
+                {/* Taux d'occupation */}
+                <div className="bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200 rounded-xl p-2.5 sm:p-3 xl:p-4">
+                  <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 xl:w-10 xl:h-10 bg-amber-500 rounded-lg flex items-center justify-center">
+                      <Target className="w-3.5 h-3.5 sm:w-4 sm:h-4 xl:w-5 xl:h-5 text-white" />
+                    </div>
+                  </div>
+                  <p className="text-base sm:text-lg xl:text-2xl font-bold text-amber-900">{detailedStats.kpis.occupancyRate}%</p>
+                  <p className="text-[9px] sm:text-[10px] xl:text-xs text-amber-600 font-medium">
+                    <span className="xl:hidden">{t('admin.agenda.statsPage.kpis.occupancyShort')}</span>
+                    <span className="hidden xl:inline">{t('admin.agenda.statsPage.kpis.occupancy')}</span>
+                  </p>
+                </div>
+              </div>
+
+              {/* KPIs secondaires - grille 2x2 sur tablette, 4 colonnes sur grand écran */}
+              <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3">
+                <div className="bg-white border rounded-lg p-2 sm:p-2.5 xl:p-3 text-center">
+                  <p className="text-sm sm:text-base xl:text-lg font-bold text-gray-800 truncate">{detailedStats.kpis.avgPerBooking}{settings.branding?.currencySymbol || '.-'}</p>
+                  <p className="text-[8px] sm:text-[9px] xl:text-xs text-gray-500">
+                    <span className="xl:hidden">{t('admin.agenda.statsPage.kpis.avgPerBookingShort')}</span>
+                    <span className="hidden xl:inline">{t('admin.agenda.statsPage.kpis.avgPerBooking')}</span>
+                  </p>
+                </div>
+                <div className="bg-white border rounded-lg p-2 sm:p-2.5 xl:p-3 text-center">
+                  <p className="text-sm sm:text-base xl:text-lg font-bold text-gray-800">{detailedStats.kpis.totalSlots}</p>
+                  <p className="text-[8px] sm:text-[9px] xl:text-xs text-gray-500">
+                    <span className="xl:hidden">{t('admin.agenda.statsPage.kpis.totalSlotsShort')}</span>
+                    <span className="hidden xl:inline">{t('admin.agenda.statsPage.kpis.totalSlots')}</span>
+                  </p>
+                </div>
+                <div className="bg-white border rounded-lg p-2 sm:p-2.5 xl:p-3 text-center">
+                  <p className="text-sm sm:text-base xl:text-lg font-bold text-gray-800">{detailedStats.kpis.bookedSlots}</p>
+                  <p className="text-[8px] sm:text-[9px] xl:text-xs text-gray-500">
+                    <span className="xl:hidden">{t('admin.agenda.statsPage.kpis.bookedSlotsShort')}</span>
+                    <span className="hidden xl:inline">{t('admin.agenda.statsPage.kpis.bookedSlots')}</span>
+                  </p>
+                </div>
+                <div className="bg-white border rounded-lg p-2 sm:p-2.5 xl:p-3 text-center">
+                  <p className="text-sm sm:text-base xl:text-lg font-bold text-gray-800">{detailedStats.kpis.totalPeople}</p>
+                  <p className="text-[8px] sm:text-[9px] xl:text-xs text-gray-500">
+                    <span className="xl:hidden">{t('admin.agenda.statsPage.kpis.totalPeopleShort')}</span>
+                    <span className="hidden xl:inline">{t('admin.agenda.statsPage.kpis.totalPeople')}</span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Graphiques */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Graphique évolution CA/Réservations */}
+                <Card className="p-4 pb-6">
+                  {/* Header avec toggle */}
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-blue-600" />
+                      {statsChartType === "revenue" 
+                        ? t('admin.agenda.statsPage.charts.revenueOverTime')
+                        : t('admin.agenda.statsPage.charts.bookingsOverTime')}
+                    </h3>
+                    <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+                      <button
+                        onClick={() => setStatsChartType("revenue")}
+                        className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                          statsChartType === "revenue" ? "bg-white shadow text-blue-600" : "text-gray-500"
+                        }`}
+                      >
+                        {t('admin.agenda.statsPage.kpis.revenue')}
+                      </button>
+                      <button
+                        onClick={() => setStatsChartType("bookings")}
+                        className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                          statsChartType === "bookings" ? "bg-white shadow text-blue-600" : "text-gray-500"
+                        }`}
+                      >
+                        {t('admin.agenda.statsPage.kpis.bookings')}
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {(() => {
+                    const data = statsChartType === "revenue" ? detailedStats.charts.revenueByDay : detailedStats.charts.bookingsByDay
+                    if (data.length === 0) {
+                      return (
+                        <div className="h-36 flex items-center justify-center text-gray-400">
+                          {t('admin.agenda.statsPage.charts.noData')}
+                        </div>
+                      )
+                    }
+                    
+                    const maxValue = Math.max(...data.map(d => d.value), 1)
+                    // Limiter à 31 barres max
+                    const displayData = data.length > 31 
+                      ? data.filter((_, i) => i % Math.ceil(data.length / 31) === 0)
+                      : data
+                    // Calculer combien de labels afficher (max 7)
+                    const labelStep = Math.max(1, Math.ceil(displayData.length / 7))
+                    
+                    return (
+                      <div className="flex flex-col">
+                        {/* Zone du graphique */}
+                        <div className="h-28 flex items-end gap-0.5 mt-8">
+                          {displayData.map((day, i) => (
+                            <div key={i} className="flex-1 flex flex-col items-center">
+                              <div 
+                                className="w-full bg-blue-500 rounded-t hover:bg-blue-600 transition-colors cursor-pointer group relative"
+                                style={{ height: `${Math.max((day.value / maxValue) * 90, 2)}px` }}
+                              >
+                                {/* Tooltip au-dessus */}
+                                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none shadow-lg">
+                                  {day.label}: {day.value}{statsChartType === "revenue" ? (settings.branding?.currencySymbol || '.-') : ' rés.'}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {/* Labels des dates en dessous */}
+                        <div className="flex gap-0.5 border-t border-gray-100 pt-1">
+                          {displayData.map((day, i) => (
+                            <div key={i} className="flex-1 text-center overflow-hidden">
+                              {i % labelStep === 0 && (
+                                <span className="text-[8px] text-gray-400">{day.label.split(' ')[0]}</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </Card>
+
+                {/* Répartition par sport */}
+                <Card className="p-4">
+                  <h3 className="font-semibold text-gray-800 flex items-center gap-2 mb-4">
+                    <PieChart className="w-4 h-4 text-purple-600" />
+                    {t('admin.agenda.statsPage.charts.bySport')}
+                  </h3>
+                  
+                  {detailedStats.charts.bySport.length === 0 ? (
+                    <div className="h-48 flex items-center justify-center text-gray-400">
+                      {t('admin.agenda.statsPage.charts.noData')}
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-48 overflow-y-auto pr-2">
+                      {detailedStats.charts.bySport.map((sport, i) => {
+                        const colors = ['bg-blue-500', 'bg-emerald-500', 'bg-purple-500', 'bg-amber-500', 'bg-rose-500', 'bg-cyan-500']
+                        return (
+                          <div key={sport.sportId} className="flex items-center gap-3">
+                            <span className="text-xl">{sport.icon}</span>
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between text-sm mb-1">
+                                <span className="font-medium text-gray-700">{sport.name}</span>
+                                <span className="text-gray-500">
+                                  {sport.revenue}{settings.branding?.currencySymbol || '.-'} • {sport.bookings} rés.
+                                </span>
+                              </div>
+                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div 
+                                  className={`h-full ${colors[i % colors.length]} rounded-full transition-all`}
+                                  style={{ width: `${sport.percentage}%` }}
+                                />
+                              </div>
+                            </div>
+                            <span className="text-sm font-semibold text-gray-600 w-12 text-right">{sport.percentage}%</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </Card>
+
+                {/* Heures populaires */}
+                <Card className="p-4">
+                  <h3 className="font-semibold text-gray-800 flex items-center gap-2 mb-4">
+                    <Clock className="w-4 h-4 text-amber-600" />
+                    {t('admin.agenda.statsPage.charts.byHour')}
+                  </h3>
+                  
+                  {detailedStats.charts.byHour.every(h => h.bookings === 0) ? (
+                    <div className="h-36 flex items-center justify-center text-gray-400">
+                      {t('admin.agenda.statsPage.charts.noData')}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col">
+                      {/* Zone du graphique */}
+                      <div className="h-28 flex items-end gap-0.5 mt-8">
+                        {detailedStats.charts.byHour.slice(6, 22).map((hour, i) => {
+                          const maxBookings = Math.max(...detailedStats.charts.byHour.map(h => h.bookings), 1)
+                          return (
+                            <div key={i} className="flex-1 flex flex-col items-center">
+                              <div 
+                                className="w-full bg-amber-400 rounded-t hover:bg-amber-500 transition-colors cursor-pointer group relative"
+                                style={{ height: `${Math.max((hour.bookings / maxBookings) * 90, 2)}px` }}
+                              >
+                                {/* Tooltip au-dessus */}
+                                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none shadow-lg">
+                                  {hour.hour + 6}h: {hour.bookings} rés.
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {/* Labels des heures en dessous */}
+                      <div className="flex gap-0.5 border-t border-gray-100 pt-1">
+                        {detailedStats.charts.byHour.slice(6, 22).map((hour, i) => (
+                          <div key={i} className="flex-1 text-center">
+                            <span className="text-[8px] text-gray-400">{hour.hour + 6}h</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </Card>
+
+                {/* Jours de la semaine */}
+                <Card className="p-4">
+                  <h3 className="font-semibold text-gray-800 flex items-center gap-2 mb-4">
+                    <Calendar className="w-4 h-4 text-green-600" />
+                    {t('admin.agenda.statsPage.charts.byDay')}
+                  </h3>
+                  
+                  {detailedStats.charts.byDayOfWeek.every(d => d.bookings === 0) ? (
+                    <div className="h-36 flex items-center justify-center text-gray-400">
+                      {t('admin.agenda.statsPage.charts.noData')}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col">
+                      {/* Zone du graphique */}
+                      <div className="h-28 flex items-end gap-2 mt-8">
+                        {/* Réorganiser: Lun-Dim au lieu de Dim-Sam */}
+                        {[1, 2, 3, 4, 5, 6, 0].map((dayIndex) => {
+                          const day = detailedStats.charts.byDayOfWeek[dayIndex]
+                          const maxBookings = Math.max(...detailedStats.charts.byDayOfWeek.map(d => d.bookings), 1)
+                          const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const
+                          return (
+                            <div key={dayIndex} className="flex-1 flex flex-col items-center">
+                              <div 
+                                className="w-full bg-green-500 rounded-t hover:bg-green-600 transition-colors cursor-pointer group relative"
+                                style={{ height: `${Math.max((day.bookings / maxBookings) * 90, 4)}px` }}
+                              >
+                                {/* Tooltip au-dessus */}
+                                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none shadow-lg">
+                                  {t(`admin.agenda.statsPage.days.${dayNames[dayIndex]}`)}: {day.bookings} rés.
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {/* Labels des jours en dessous */}
+                      <div className="flex gap-2 border-t border-gray-100 pt-1">
+                        {[1, 2, 3, 4, 5, 6, 0].map((dayIndex) => {
+                          const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const
+                          return (
+                            <div key={dayIndex} className="flex-1 text-center">
+                              <span className="text-xs text-gray-500 font-medium">
+                                {t(`admin.agenda.statsPage.days.${dayNames[dayIndex]}`)}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              </div>
+
+              {/* Tableaux */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Top créneaux */}
+                <Card className="p-4">
+                  <h3 className="font-semibold text-gray-800 mb-4">{t('admin.agenda.statsPage.tables.topSlots')}</h3>
+                  
+                  {detailedStats.tables.topSlots.length === 0 ? (
+                    <div className="text-center text-gray-400 py-8">
+                      {t('admin.agenda.statsPage.charts.noData')}
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-gray-500 border-b">
+                            <th className="pb-2 font-medium">{t('admin.agenda.statsPage.tables.date')}</th>
+                            <th className="pb-2 font-medium">{t('admin.agenda.statsPage.tables.time')}</th>
+                            <th className="pb-2 font-medium">{t('admin.agenda.statsPage.tables.sport')}</th>
+                            <th className="pb-2 font-medium text-right">{t('admin.agenda.statsPage.tables.bookingsCount')}</th>
+                            <th className="pb-2 font-medium text-right">{t('admin.agenda.statsPage.tables.revenue')}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detailedStats.tables.topSlots.map((slot) => (
+                            <tr key={slot.id} className="border-b border-gray-50 hover:bg-gray-50">
+                              <td className="py-2 text-gray-700">
+                                {new Date(slot.date + "T12:00:00").toLocaleDateString(i18n.language, { day: 'numeric', month: 'short' })}
+                              </td>
+                              <td className="py-2 text-gray-700">{slot.time}</td>
+                              <td className="py-2">
+                                <span className="flex items-center gap-1">
+                                  <span>{slot.sportIcon}</span>
+                                  <span className="text-gray-600">{slot.sportName}</span>
+                                </span>
+                              </td>
+                              <td className="py-2 text-right font-medium">{slot.currentBookings}/{slot.maxCapacity}</td>
+                              <td className="py-2 text-right font-semibold text-emerald-600">
+                                {slot.totalRevenue}{settings.branding?.currencySymbol || '.-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+
+                {/* Réservations récentes */}
+                <Card className="p-4">
+                  <h3 className="font-semibold text-gray-800 mb-4">{t('admin.agenda.statsPage.tables.recentBookings')}</h3>
+                  
+                  {detailedStats.tables.recentBookings.length === 0 ? (
+                    <div className="text-center text-gray-400 py-8">
+                      {t('admin.agenda.statsPage.charts.noData')}
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-gray-500 border-b">
+                            <th className="pb-2 font-medium">{t('admin.agenda.statsPage.tables.client')}</th>
+                            <th className="pb-2 font-medium">{t('admin.agenda.statsPage.tables.sport')}</th>
+                            <th className="pb-2 font-medium text-center">{t('admin.agenda.statsPage.tables.people')}</th>
+                            <th className="pb-2 font-medium text-right">{t('admin.agenda.statsPage.tables.price')}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detailedStats.tables.recentBookings.map((booking) => (
+                            <tr key={booking.id} className="border-b border-gray-50 hover:bg-gray-50">
+                              <td className="py-2">
+                                <div>
+                                  <p className="font-medium text-gray-700">{booking.customerName || '-'}</p>
+                                  <p className="text-xs text-gray-400">
+                                    {booking.slot 
+                                      ? `${new Date(booking.slot.date + "T12:00:00").toLocaleDateString(i18n.language, { day: 'numeric', month: 'short' })} ${booking.slot.time}`
+                                      : '-'}
+                                  </p>
+                                </div>
+                              </td>
+                              <td className="py-2">
+                                <span className="flex items-center gap-1">
+                                  <span>{booking.sportIcon}</span>
+                                  <span className="text-gray-600 text-xs">{booking.sportName}</span>
+                                </span>
+                              </td>
+                              <td className="py-2 text-center">{booking.numberOfPeople || 0}</td>
+                              <td className="py-2 text-right font-semibold text-emerald-600">
+                                {booking.slot ? (booking.slot.price * (booking.numberOfPeople || 0)) : 0}{settings.branding?.currencySymbol || '.-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              </div>
+
+              {/* Comparaison par sport */}
+              {statsSportFilter === "all" && detailedStats.charts.bySport.length > 1 && (
+                <Card className="p-4">
+                  <h3 className="font-semibold text-gray-800 mb-4">{t('admin.agenda.statsPage.tables.sportComparison')}</h3>
+                  
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-gray-500 border-b">
+                          <th className="pb-2 font-medium">{t('admin.agenda.statsPage.tables.sport')}</th>
+                          <th className="pb-2 font-medium text-right">{t('admin.agenda.statsPage.kpis.revenue')}</th>
+                          <th className="pb-2 font-medium text-right">{t('admin.agenda.statsPage.kpis.bookings')}</th>
+                          <th className="pb-2 font-medium text-right">%</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailedStats.charts.bySport.sort((a, b) => b.revenue - a.revenue).map((sport) => (
+                          <tr key={sport.sportId} className="border-b border-gray-50 hover:bg-gray-50">
+                            <td className="py-3">
+                              <span className="flex items-center gap-2">
+                                <span className="text-xl">{sport.icon}</span>
+                                <span className="font-medium text-gray-700">{sport.name}</span>
+                              </span>
+                            </td>
+                            <td className="py-3 text-right font-semibold text-emerald-600">
+                              {sport.revenue}{settings.branding?.currencySymbol || '.-'}
+                            </td>
+                            <td className="py-3 text-right text-gray-600">{sport.bookings}</td>
+                            <td className="py-3 text-right">
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                                {sport.percentage}%
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="font-bold border-t-2">
+                          <td className="pt-3">Total</td>
+                          <td className="pt-3 text-right text-emerald-600">
+                            {detailedStats.kpis.totalRevenue}{settings.branding?.currencySymbol || '.-'}
+                          </td>
+                          <td className="pt-3 text-right text-gray-700">{detailedStats.kpis.totalBookings}</td>
+                          <td className="pt-3 text-right">100%</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </Card>
+              )}
+
             </TabsContent>
 
           </Tabs>
@@ -5388,35 +7461,25 @@ export default function AdminPage() {
               <h2 className="text-xl font-bold text-gray-900 mb-6">{t('admin.slots.edit')}</h2>
               
               <div className="space-y-5">
-                {/* Sports */}
+                {/* Sport (lecture seule) */}
                 <div>
-                  <Label className="text-sm font-medium text-gray-700 mb-2 block">{t('admin.tabs.sports')}</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {sports.filter(s => s.enabled).map((sport) => (
-                      <button
-                        key={sport.id}
-                        onClick={() => {
-                          const newSportIds = slotForm.sportIds.includes(sport.id)
-                            ? slotForm.sportIds.filter(id => id !== sport.id)
-                            : [...slotForm.sportIds, sport.id]
-                          if (newSportIds.length > 0) {
-                            setSlotForm({ ...slotForm, sportIds: newSportIds })
-                          }
-                        }}
-                        className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-all ${
-                          slotForm.sportIds.includes(sport.id)
-                            ? "bg-blue-100 text-blue-800 border-2 border-blue-400"
-                            : "bg-gray-50 text-gray-700 border-2 border-gray-200 hover:bg-gray-100"
-                        }`}
-                      >
-                        <span className="text-lg">{sport.icon}</span>
-                        <span className="font-medium">{sport.name}</span>
-                        {slotForm.sportIds.includes(sport.id) && (
-                          <span className="ml-auto text-blue-600">✓</span>
-                        )}
-                      </button>
-                    ))}
+                  <Label className="text-sm font-medium text-gray-700 mb-2 block">{t('admin.slots.sport')}</Label>
+                  <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-gray-100 border-2 border-gray-200">
+                    {(() => {
+                      const sport = sports.find(s => s.id === slotForm.sportId)
+                      return sport ? (
+                        <>
+                          <span className="text-xl">{sport.icon}</span>
+                          <span className="font-medium text-gray-700">{sport.name}</span>
+                        </>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )
+                    })()}
                   </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {t('admin.slots.sportNotEditable')}
+                  </p>
                 </div>
 
                 {/* Prix et Capacité */}
@@ -5500,8 +7563,8 @@ export default function AdminPage() {
                   </div>
                 </div>
 
-                {/* Actions */}
-                <div className="flex gap-3 pt-2">
+                {/* Actions - responsive pour mobile */}
+                <div className="flex gap-2 sm:gap-3 pt-2">
                   {editingSlot && (
                     <Button
                       onClick={() => {
@@ -5509,10 +7572,11 @@ export default function AdminPage() {
                         setEditingSlot(null)
                         setIsSlotDialogOpen(false)
                       }}
-                      className="px-4 bg-red-600 hover:bg-red-700 text-white"
+                      className="px-2 sm:px-4 bg-red-600 hover:bg-red-700 text-white"
+                      title={t('common.delete')}
                     >
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      {t('common.delete')}
+                      <Trash2 className="w-4 h-4 sm:mr-2" />
+                      <span className="hidden sm:inline">{t('common.delete')}</span>
                     </Button>
                   )}
                   <div className="flex flex-1 gap-2 justify-end">
@@ -5522,10 +7586,12 @@ export default function AdminPage() {
                         setEditingSlot(null)
                         setIsSlotDialogOpen(false)
                       }}
+                      className="px-3 sm:px-4"
                     >
-                      {t('common.cancel')}
+                      <span className="sm:hidden">{t('common.cancelShort') || '✕'}</span>
+                      <span className="hidden sm:inline">{t('common.cancel')}</span>
                     </Button>
-                    <Button onClick={handleSaveSlot}>
+                    <Button onClick={handleSaveSlot} className="px-3 sm:px-4">
                       {t('common.save')}
                     </Button>
                   </div>
@@ -5901,9 +7967,7 @@ export default function AdminPage() {
               
               <div className="flex items-center gap-3 mb-3">
                 <span className="text-3xl">
-                  {getSportIcons(bookingDetailsModal.slot.sportIds || [bookingDetailsModal.slot.sportId!]).map((s, i) => (
-                    <span key={i}>{s.icon}</span>
-                  ))}
+                  <span>{getSportInfo(bookingDetailsModal.slot.sportId).icon}</span>
                 </span>
                 <div>
                   <h2 className="text-xl font-bold">{t('admin.agenda.bookingDetails')}</h2>
@@ -5996,6 +8060,176 @@ export default function AdminPage() {
                 variant="outline"
               >
                 {t('common.close')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dialog d'export PDF - EN DEHORS des Tabs pour couvrir tout l'écran */}
+      {isExportDialogOpen && (
+        <div 
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setIsExportDialogOpen(false)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-4">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <Download className="w-5 h-5" />
+                {t('admin.agenda.statsPage.export.button')}
+              </h3>
+              <p className="text-blue-100 text-sm mt-1">{t('admin.agenda.statsPage.export.configureExport')}</p>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-5">
+              {/* Type d'export */}
+              <div>
+                <Label className="text-sm font-medium text-gray-700 mb-2 block">{t('admin.agenda.statsPage.export.exportType')}</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setExportOptions({ ...exportOptions, mode: "summary" })}
+                    className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                      exportOptions.mode === "summary" 
+                        ? "border-blue-500 bg-blue-50 text-blue-700" 
+                        : "border-gray-200 hover:border-gray-300 text-gray-600"
+                    }`}
+                  >
+                    <span className="text-2xl">📄</span>
+                    <span className="text-sm font-medium">{t('admin.agenda.statsPage.export.summaryShort')}</span>
+                    <span className="text-xs text-gray-500">{t('admin.agenda.statsPage.export.summaryDesc')}</span>
+                  </button>
+                  <button
+                    onClick={() => setExportOptions({ ...exportOptions, mode: "detailed" })}
+                    className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                      exportOptions.mode === "detailed" 
+                        ? "border-blue-500 bg-blue-50 text-blue-700" 
+                        : "border-gray-200 hover:border-gray-300 text-gray-600"
+                    }`}
+                  >
+                    <span className="text-2xl">📋</span>
+                    <span className="text-sm font-medium">{t('admin.agenda.statsPage.export.detailedShort')}</span>
+                    <span className="text-xs text-gray-500">{t('admin.agenda.statsPage.export.detailedDesc')}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Période */}
+              <div>
+                <Label className="text-sm font-medium text-gray-700 mb-2 block">{t('admin.agenda.statsPage.export.period')}</Label>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setExportOptions({ ...exportOptions, period: "current" })}
+                    className={`w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-all text-left ${
+                      exportOptions.period === "current" 
+                        ? "border-blue-500 bg-blue-50" 
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      exportOptions.period === "current" ? "border-blue-500" : "border-gray-300"
+                    }`}>
+                      {exportOptions.period === "current" && <div className="w-2 h-2 rounded-full bg-blue-500" />}
+                    </div>
+                    <div>
+                      <p className="font-medium text-gray-700">{t('admin.agenda.statsPage.export.currentPeriod')}</p>
+                      <p className="text-xs text-gray-500">
+                        {(() => {
+                          const periods: Record<string, string> = {
+                            thisWeek: t('admin.agenda.statsPage.filters.thisWeek'),
+                            lastWeek: t('admin.agenda.statsPage.filters.lastWeek'),
+                            thisMonth: t('admin.agenda.statsPage.filters.thisMonth'),
+                            lastMonth: t('admin.agenda.statsPage.filters.lastMonth'),
+                            last30Days: t('admin.agenda.statsPage.filters.last30Days'),
+                            last90Days: t('admin.agenda.statsPage.filters.last90Days'),
+                            thisYear: t('admin.agenda.statsPage.filters.thisYear'),
+                            custom: `${statsCustomDateStart} - ${statsCustomDateEnd}`
+                          }
+                          return periods[statsPeriod] || statsPeriod
+                        })()}
+                      </p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => setExportOptions({ ...exportOptions, period: "custom" })}
+                    className={`w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-all text-left ${
+                      exportOptions.period === "custom" 
+                        ? "border-blue-500 bg-blue-50" 
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      exportOptions.period === "custom" ? "border-blue-500" : "border-gray-300"
+                    }`}>
+                      {exportOptions.period === "custom" && <div className="w-2 h-2 rounded-full bg-blue-500" />}
+                    </div>
+                    <p className="font-medium text-gray-700">{t('admin.agenda.statsPage.export.customPeriod')}</p>
+                  </button>
+                </div>
+
+                {/* Dates personnalisées */}
+                {exportOptions.period === "custom" && (
+                  <div className="mt-3 grid grid-cols-2 gap-3 pl-7">
+                    <div>
+                      <Label className="text-xs text-gray-500 mb-1 block">{t('admin.agenda.statsPage.filters.from')}</Label>
+                      <Input
+                        type="date"
+                        value={exportOptions.customStartDate}
+                        onChange={(e) => setExportOptions({ ...exportOptions, customStartDate: e.target.value })}
+                        className="text-sm"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-500 mb-1 block">{t('admin.agenda.statsPage.filters.to')}</Label>
+                      <Input
+                        type="date"
+                        value={exportOptions.customEndDate}
+                        onChange={(e) => setExportOptions({ ...exportOptions, customEndDate: e.target.value })}
+                        className="text-sm"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Inclure le filtre sport */}
+              {statsSportFilter !== "all" && (
+                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">{sports.find(s => s.id === statsSportFilter)?.icon}</span>
+                    <span className="text-sm text-gray-700">
+                      {t('admin.agenda.statsPage.export.includeSportFilter')} "{sports.find(s => s.id === statsSportFilter)?.name}"
+                    </span>
+                  </div>
+                  <Checkbox
+                    checked={exportOptions.includeSportFilter}
+                    onCheckedChange={(checked) => setExportOptions({ ...exportOptions, includeSportFilter: checked === true })}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-gray-50 flex justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setIsExportDialogOpen(false)}
+              >
+                {t('common.cancel')}
+              </Button>
+              <Button
+                onClick={() => {
+                  exportStatsPDF(exportOptions)
+                  setIsExportDialogOpen(false)
+                }}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                {t('admin.agenda.statsPage.export.generate')}
               </Button>
             </div>
           </div>

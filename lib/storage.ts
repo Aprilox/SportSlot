@@ -47,6 +47,7 @@ export interface BrandingSettings {
   currency: string
   currencySymbol: string
   defaultLanguage: string // Langue par défaut (fr, en, de, etc.)
+  timeFormat: "24h" | "12h" // Format d'heure (24h ou 12h AM/PM)
   contactEmail: string
   contactPhone: string
   address: string
@@ -96,8 +97,7 @@ export interface Booking {
 
 export interface TimeSlot {
   id: string
-  sportIds: string[]
-  sportId?: string // Legacy support
+  sportId: string // ID du sport unique pour ce créneau
   date: string
   time: string
   duration: number
@@ -167,6 +167,7 @@ const DEFAULT_BRANDING: BrandingSettings = {
   currency: "CHF",
   currencySymbol: ".-",
   defaultLanguage: "fr",
+  timeFormat: "24h",
   contactEmail: "",
   contactPhone: "",
   address: "",
@@ -307,8 +308,72 @@ export const saveSports = (sports: Sport[], options?: { immediate?: boolean }): 
 // TIME SLOTS
 // ===========================================
 
+// Interface pour les anciens créneaux avec sportIds (multi-sport)
+interface LegacyTimeSlot extends Omit<TimeSlot, 'sportId'> {
+  sportIds?: string[]
+  sportId?: string
+}
+
+// Migration des créneaux multi-sport vers single-sport
+const migrateMultiSportSlots = (slots: LegacyTimeSlot[]): TimeSlot[] => {
+  const migratedSlots: TimeSlot[] = []
+  
+  for (const slot of slots) {
+    // Si le créneau a déjà un sportId et pas de sportIds, pas de migration nécessaire
+    if (slot.sportId && !slot.sportIds) {
+      migratedSlots.push(slot as TimeSlot)
+      continue
+    }
+    
+    // Si le créneau a des sportIds (ancien format)
+    const sportIds = slot.sportIds || (slot.sportId ? [slot.sportId] : [])
+    
+    if (sportIds.length === 0) {
+      // Pas de sport - ignorer ce créneau
+      console.warn(`Créneau ${slot.id} sans sport ignoré`)
+      continue
+    }
+    
+    if (sportIds.length === 1) {
+      // Un seul sport - simple migration
+      const { sportIds: _, ...slotWithoutSportIds } = slot
+      migratedSlots.push({
+        ...slotWithoutSportIds,
+        sportId: sportIds[0],
+      } as TimeSlot)
+    } else {
+      // Plusieurs sports - dupliquer le créneau pour chaque sport
+      for (let i = 0; i < sportIds.length; i++) {
+        const sportId = sportIds[i]
+        const { sportIds: _, sportId: __, ...slotBase } = slot
+        migratedSlots.push({
+          ...slotBase,
+          id: i === 0 ? slot.id : `${slot.id}-${sportId}`,
+          sportId,
+        } as TimeSlot)
+      }
+    }
+  }
+  
+  return migratedSlots
+}
+
 export const getSlots = (): TimeSlot[] => {
-  return getFromStorage(STORAGE_KEYS.SLOTS, [])
+  const rawSlots = getFromStorage<LegacyTimeSlot[]>(STORAGE_KEYS.SLOTS, [])
+  
+  // Vérifier si une migration est nécessaire
+  const needsMigration = rawSlots.some(s => s.sportIds && s.sportIds.length > 0)
+  
+  if (needsMigration) {
+    console.log('🔄 Migration des créneaux multi-sport en cours...')
+    const migratedSlots = migrateMultiSportSlots(rawSlots)
+    // Sauvegarder les créneaux migrés
+    saveToStorage(STORAGE_KEYS.SLOTS, migratedSlots)
+    console.log(`✅ Migration terminée: ${rawSlots.length} → ${migratedSlots.length} créneaux`)
+    return migratedSlots
+  }
+  
+  return rawSlots as TimeSlot[]
 }
 
 export const saveSlots = (slots: TimeSlot[], options?: { immediate?: boolean }): void => {
@@ -434,7 +499,19 @@ export const getPendingClosureDeletionCount = (): number => {
 // ===========================================
 
 export const getSettings = (): Settings => {
-  return getFromStorage(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS)
+  const stored = getFromStorage(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS)
+  // Fusionner avec les valeurs par défaut pour les nouveaux champs
+  return {
+    ...DEFAULT_SETTINGS,
+    ...stored,
+    branding: {
+      ...DEFAULT_BRANDING,
+      ...stored.branding
+    },
+    smtp: stored.smtp ? {
+      ...stored.smtp
+    } : undefined
+  }
 }
 
 export const saveSettings = (settings: Settings, skipSync = false): void => {

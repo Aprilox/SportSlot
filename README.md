@@ -15,7 +15,8 @@
 |--------|-------|
 | Calendrier de réservation | Gestion des créneaux |
 | Filtrage par sport | Mode Vue / Édition |
-| Réservation en ligne | Personnalisation complète |
+| Réservation en ligne | Statistiques détaillées |
+| Mobile responsive | Export PDF |
 
 ---
 
@@ -25,17 +26,20 @@
 - 📅 **Calendrier interactif** de réservation par semaine
 - 🎾 **Filtrage par sport** avec icônes personnalisées
 - 📱 **Responsive** - Mobile, tablette et desktop
+- 👆 **Swipe navigation** - Naviguez entre jours/semaines en glissant
 - 👆 **Swipe to close** - Fermez les popups en glissant (mobile)
 - 💾 **Formulaire persistant** - Vos infos sont gardées si fermeture accidentelle
-- 🌍 **Multi-langue** - Français, English, Deutsch (erreurs incluses)
+- 🌍 **7 langues** - FR, EN, DE, ES, IT, PT, NL
 - 📧 **Confirmation par email** (client + équipe)
 - ⏰ **Temps réel** - Mise à jour instantanée des disponibilités
 - 🔒 **Protection anti-surréservation** - Transactions atomiques
 - 🎨 **Popups stylées** - Modals modernes au lieu des alertes navigateur
+- 🕐 **Format horaire** - 24h ou 12h AM/PM selon vos préférences
 
 ### 🔧 Côté Admin
 - 📊 **Vue / Édition** - Consultez (= vue client) ou modifiez l'agenda
 - 👁️ **Mode Vue** - Prévisualisez exactement ce que vos clients voient
+- 📱 **Vue mobile adaptée** - Vue jour unique avec swipe sur mobile
 - 🗓️ **Glisser-déposer** - Créez, déplacez, redimensionnez les créneaux
 - ✏️ **Création par sélection** - Glissez pour définir la durée
 - 🗑️ **Mode Gomme** - Sélectionnez plusieurs créneaux à supprimer
@@ -49,6 +53,9 @@
 - 🔔 **Notifications** - Alertes pour nouvelles réservations
 - 📤 **Publication** - Messages clairs sur ce qui est publié
 - 🎨 **Popups stylées** - Confirmations et alertes modernes
+- 📊 **Statistiques complètes** - KPIs, graphiques, tableaux détaillés
+- 📄 **Export PDF** - Rapports résumés ou détaillés avec branding
+- 🕐 **Format horaire configurable** - 24h ou 12h AM/PM
 
 ---
 
@@ -170,6 +177,7 @@ pnpm build && pnpm start
 2. Sélectionnez le mode **Créneau** (📅)
 3. **Clic simple** → Créneau avec durée par défaut
 4. **Clic + glisser** → Définir la durée manuellement
+5. **Choisissez** les sports, la durée, le prix et la capacité
 
 ### Gestion des Créneaux
 
@@ -197,6 +205,33 @@ Cliquez sur **🚀 Publier** pour appliquer les changements. Un message clair in
 
 ---
 
+## 📊 Statistiques
+
+L'onglet **Statistiques** offre une vue complète de votre activité :
+
+### KPIs
+- 💰 Chiffre d'affaires
+- 📈 Nombre de réservations
+- 👥 Clients uniques
+- 📊 Taux d'occupation
+
+### Graphiques
+- 📈 Évolution du chiffre d'affaires
+- 🏆 Répartition par sport
+- ⏰ Heures les plus populaires
+- 📅 Jours de la semaine
+
+### Filtres
+- Par sport
+- Par période (semaine, mois, année, personnalisé)
+
+### Export PDF
+- **Résumé** : KPIs et répartition (pour comptabilité)
+- **Détaillé** : Avec liste complète des réservations
+- Inclut le logo et les informations de votre entreprise
+
+---
+
 ## 🎨 Personnalisation
 
 Dans **Admin > Paramètres** :
@@ -208,6 +243,7 @@ Dans **Admin > Paramètres** :
 | **Couleur principale** | Thème de l'interface |
 | **Devise** | CHF, EUR, USD... |
 | **Langue par défaut** | Langue initiale pour les nouveaux visiteurs |
+| **Format horaire** | 24h (14:00) ou 12h (2:00 PM) |
 | **Horaires** | Par jour de la semaine |
 | **Délai minimum** | Temps avant réservation |
 
@@ -225,7 +261,7 @@ Dans **Admin > Paramètres** :
 
 ### Emails envoyés
 - ✉️ **Client** : Confirmation de réservation (dans sa langue)
-- ✉️ **Équipe** : Notification de nouvelle réservation (en anglais)
+- ✉️ **Équipe** : Notification de nouvelle réservation (traduit)
 
 ---
 
@@ -255,7 +291,7 @@ sportslot/
 ├── app/                    # Pages Next.js
 │   ├── page.tsx           # Page client (réservations)
 │   ├── admin/             # Panel admin
-│   │   ├── page.tsx       # Dashboard
+│   │   ├── page.tsx       # Dashboard + Stats
 │   │   └── login/         # Connexion
 │   └── api/               # API Routes
 ├── components/            # Composants React
@@ -264,11 +300,15 @@ sportslot/
 │   ├── config.ts         # Configuration
 │   ├── db.ts             # Base de données
 │   ├── storage.ts        # LocalStorage
-│   └── i18n.ts           # Traductions
+│   └── i18n.ts           # Traductions (7 langues)
 ├── locales/              # Fichiers de langue
 │   ├── fr.json           # 🇫🇷 Français
 │   ├── en.json           # 🇬🇧 English
-│   └── de.json           # 🇩🇪 Deutsch
+│   ├── de.json           # 🇩🇪 Deutsch
+│   ├── es.json           # 🇪🇸 Español
+│   ├── it.json           # 🇮🇹 Italiano
+│   ├── pt.json           # 🇵🇹 Português
+│   └── nl.json           # 🇳🇱 Nederlands
 ├── prisma/               # Schéma DB
 │   └── schema.prisma
 └── public/               # Assets statiques
@@ -284,19 +324,26 @@ sportslot/
 - ✅ **Validation côté serveur** de toutes les données
 - ✅ **Nodemailer sécurisé** - v7.0.11+ (vulnérabilités corrigées)
 - ✅ **Formulaires accessibles** - Conformes aux standards W3C
+- ✅ **Contraintes de déplacement** - Les créneaux ne sortent pas des horaires
 - ⚠️ **Changez** `HASH_SECRET` en production !
 
 ---
 
 ## 🌍 Langues
 
-| Langue | Code | Sélection |
-|--------|------|-----------|
-| 🇫🇷 Français | `fr` | Par défaut ou sélecteur |
-| 🇬🇧 English | `en` | Sélecteur haut-droite |
-| 🇩🇪 Deutsch | `de` | Sélecteur haut-droite |
+| Langue | Code | Drapeau |
+|--------|------|---------|
+| Français | `fr` | 🇫🇷 |
+| English | `en` | 🇬🇧 |
+| Deutsch | `de` | 🇩🇪 |
+| Español | `es` | 🇪🇸 |
+| Italiano | `it` | 🇮🇹 |
+| Português | `pt` | 🇵🇹 |
+| Nederlands | `nl` | 🇳🇱 |
 
-La langue admin est configurable dans les paramètres.
+- La langue par défaut est configurable dans les paramètres admin
+- Les clients peuvent changer la langue via le sélecteur en haut à droite
+- Toutes les traductions incluent : interface, emails, erreurs
 
 ---
 
@@ -319,6 +366,18 @@ La langue admin est configurable dans les paramètres.
 
 ## 📝 Changelog
 
+### v1.3.0 (Actuel)
+- 🌍 **7 langues** - Ajout Español, Italiano, Português, Nederlands
+- 📊 **Statistiques complètes** - KPIs, graphiques, tableaux
+- 📄 **Export PDF** - Rapports résumés et détaillés avec branding
+- 🕐 **Format horaire** - Choix 24h ou 12h AM/PM
+- 📱 **Admin mobile** - Vue jour unique avec swipe
+- 📅 **Vue mois améliorée** - Stats détaillées desktop, badges compacts mobile
+- 👆 **Swipe semaines** - Navigation fluide sur mobile
+- 🎯 **Contraintes créneaux** - Impossible de déplacer hors horaires
+- 🔄 **Redirection mois→semaine** - Clic sur jour en vue mois
+- 🐛 **Fix double drapeau** - Correction affichage langue par défaut
+
 ### v1.2.0
 - ✅ **Popups personnalisées** - Remplace les alert/confirm natifs par des modals stylés
 - ✅ **Swipe to close** - Fermez les popups en glissant vers le bas (mobile)
@@ -326,7 +385,7 @@ La langue admin est configurable dans les paramètres.
 - ✅ **Conservation du formulaire** - Les infos client sont gardées si fermeture accidentelle
 - ✅ **Mode Vue amélioré** - Affiche exactement ce que le client voit (créneaux publiés uniquement)
 - ✅ **Messages de publication** - Messages clairs sans infos techniques
-- ✅ **Traductions erreurs** - Toutes les erreurs de réservation traduites (FR/EN/DE)
+- ✅ **Traductions erreurs** - Toutes les erreurs de réservation traduites
 - ✅ **Blocage scroll** - Le contenu derrière les popups ne scroll plus
 - ✅ **Fix créneaux non publiés** - Les créneaux en attente ne sont plus visibles côté client
 - ✅ **Fix gomme** - Le mode gomme se désactive en passant en mode Vue

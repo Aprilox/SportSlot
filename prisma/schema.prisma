@@ -34,6 +34,7 @@ model Sport {
   imageUrl String?
   order    Int     @default(0)
   
+  // Relation one-to-many : un sport peut avoir plusieurs créneaux
   slots    TimeSlot[]
   
   createdAt DateTime @default(now())
@@ -61,8 +62,11 @@ model TimeSlot {
   originalTime     String?  // Heure originale avant déplacement
   originalDuration Int?     // Durée originale avant redimensionnement
   
-  // Relations
-  sports   Sport[]
+  // Relation one-to-one avec Sport (1 créneau = 1 sport)
+  sportId  String
+  sport    Sport    @relation(fields: [sportId], references: [id], onDelete: Cascade)
+  
+  // Réservations
   bookings Booking[]
   
   createdAt DateTime @default(now())
@@ -71,6 +75,7 @@ model TimeSlot {
   @@index([date])
   @@index([date, time])
   @@index([published])
+  @@index([sportId])
 }
 
 // ===========================================

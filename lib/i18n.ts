@@ -3,12 +3,20 @@ import { initReactI18next } from 'react-i18next';
 import en from '../locales/en.json';
 import fr from '../locales/fr.json';
 import de from '../locales/de.json';
+import es from '../locales/es.json';
+import it from '../locales/it.json';
+import pt from '../locales/pt.json';
+import nl from '../locales/nl.json';
 
 // Liste des langues supportées
 export const SUPPORTED_LANGUAGES = [
   { code: 'fr', name: 'Français', flag: 'FR' },
-  { code: 'en', name: 'English', flag: 'EN' },
+  { code: 'en', name: 'English', flag: 'GB' },
   { code: 'de', name: 'Deutsch', flag: 'DE' },
+  { code: 'es', name: 'Español', flag: 'ES' },
+  { code: 'it', name: 'Italiano', flag: 'IT' },
+  { code: 'pt', name: 'Português', flag: 'PT' },
+  { code: 'nl', name: 'Nederlands', flag: 'NL' },
 ] as const;
 
 export type LanguageCode = typeof SUPPORTED_LANGUAGES[number]['code'];
@@ -70,6 +78,10 @@ const initI18n = () => {
       en: { translation: en },
       fr: { translation: fr },
       de: { translation: de },
+      es: { translation: es },
+      it: { translation: it },
+      pt: { translation: pt },
+      nl: { translation: nl },
     },
     lng: initialLanguage,
     fallbackLng: 'fr',

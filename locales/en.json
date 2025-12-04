@@ -3,6 +3,7 @@
     "loading": "Loading...",
     "save": "Save",
     "cancel": "Cancel",
+    "cancelShort": "✕",
     "delete": "Delete",
     "edit": "Edit",
     "close": "Close",
@@ -24,14 +25,19 @@
     "import": "Import",
     "icon": "Icon",
     "resetZoom": "Reset position and zoom",
-    "center": "Center image"
+    "center": "Center image",
+    "create": "Create",
+    "error": "Error",
+    "unknownError": "Unknown error"
   },
   "languages": {
     "fr": "Français",
     "en": "English",
     "de": "Deutsch",
+    "es": "Español",
     "it": "Italiano",
-    "es": "Español"
+    "pt": "Português",
+    "nl": "Nederlands"
   },
   "nav": {
     "home": "Home",
@@ -130,6 +136,7 @@
     },
     "summary": {
       "title": "Summary",
+      "details": "Booking details",
       "sport": "Sport",
       "date": "Date",
       "time": "Time",
@@ -137,6 +144,9 @@
       "people": "People",
       "pricePerPerson": "Price per person",
       "total": "Total"
+    },
+    "email": {
+      "automaticFrom": "Automatic email from"
     },
     "submit": "Confirm booking",
     "submitting": "Booking in progress...",
@@ -179,6 +189,7 @@
     "tabs": {
       "agenda": "Schedule",
       "sports": "Sports",
+      "stats": "Statistics",
       "settings": "Settings"
     },
     "agenda": {
@@ -207,6 +218,99 @@
         "hours": "Hours",
         "fillRate": "Fill rate"
       },
+      "swipeToNavigate": "Swipe to change day",
+      "statsPage": {
+        "title": "Detailed statistics",
+        "subtitle": "Analyze your performance",
+        "filters": {
+          "sport": "Sport",
+          "allSports": "All sports",
+          "period": "Period",
+          "thisWeek": "This week",
+          "lastWeek": "Last week",
+          "thisMonth": "This month",
+          "lastMonth": "Last month",
+          "thisYear": "This year",
+          "last30Days": "Last 30 days",
+          "last90Days": "Last 90 days",
+          "custom": "Custom",
+          "from": "From",
+          "to": "To"
+        },
+        "kpis": {
+          "revenue": "Revenue",
+          "revenueShort": "Rev.",
+          "bookings": "Bookings",
+          "bookingsShort": "Book.",
+          "clients": "Unique clients",
+          "clientsShort": "Clients",
+          "occupancy": "Occupancy rate",
+          "occupancyShort": "Occup.",
+          "avgPerBooking": "Avg/booking",
+          "avgPerBookingShort": "Avg.",
+          "totalSlots": "Total slots",
+          "totalSlotsShort": "Slots",
+          "bookedSlots": "Booked slots",
+          "bookedSlotsShort": "Booked",
+          "availableSlots": "Available slots",
+          "cancelledBookings": "Cancellations",
+          "totalPeople": "Total people",
+          "totalPeopleShort": "People",
+          "fillRate": "Fill rate"
+        },
+        "charts": {
+          "revenueOverTime": "Revenue over time",
+          "bookingsOverTime": "Bookings over time",
+          "bySport": "Distribution by sport",
+          "byHour": "Most popular hours",
+          "byDay": "Days of the week",
+          "noData": "No data for this period"
+        },
+        "tables": {
+          "topSlots": "Top booked slots",
+          "recentBookings": "Recent bookings",
+          "sportComparison": "Sport comparison",
+          "slot": "Slot",
+          "date": "Date",
+          "time": "Time",
+          "sport": "Sport",
+          "bookingsCount": "Bookings",
+          "revenue": "Revenue",
+          "client": "Client",
+          "people": "Ppl.",
+          "price": "Price",
+          "bookedAt": "Booked at"
+        },
+        "days": {
+          "mon": "Mon",
+          "tue": "Tue",
+          "wed": "Wed",
+          "thu": "Thu",
+          "fri": "Fri",
+          "sat": "Sat",
+          "sun": "Sun"
+        },
+        "export": {
+          "button": "Export PDF",
+          "title": "Statistics Report",
+          "summary": "Summary (tax declaration)",
+          "detailed": "Detailed (with bookings)",
+          "period": "Period",
+          "generatedOn": "Generated on",
+          "bookingsList": "Bookings list",
+          "configureExport": "Configure your export",
+          "exportType": "Export type",
+          "summaryShort": "Summary",
+          "summaryDesc": "KPIs and distribution",
+          "detailedShort": "Detailed",
+          "detailedDesc": "With bookings",
+          "currentPeriod": "Current period",
+          "customPeriod": "Custom period",
+          "includeSportFilter": "Include only",
+          "generate": "Generate PDF"
+        },
+        "refresh": "Refresh"
+      },
       "tools": "Tools",
       "viewMode": "View",
       "editModeBtn": "Edit",
@@ -220,13 +324,16 @@
       "cancelBooking": "Cancel",
       "confirmDeleteBooking": "Cancel booking for {{name}} ({{people}} person(s))?",
       "clickToAdd": "Click on the calendar to add a slot",
+      "holdToAdd": "Hold and drag to create",
       "clickToClose": "Click on a day to mark it as closed. Click again to cancel.",
+      "holdToClose": "Hold to close the day",
       "dragOrClick": "Click or drag an image here",
       "eraserMode": "Eraser mode: left click to select • right click to deselect • hold and drag",
       "closureModeActive": "Closure mode active",
       "multiplePeriod": "Multiple period",
       "closedDays": "Closed days",
       "closed": "CLOSED",
+      "notWorking": "Day off",
       "slotCount": "slot",
       "slotsCount": "slots",
       "storageLocal": "Local",
@@ -266,7 +373,8 @@
       "willBeDeleted": "will be deleted",
       "willBeUpdated": "will be updated (sport removed)",
       "imageUrl": "Image URL (optional)",
-      "notEnabled": "The selected sport is not enabled."
+      "notEnabled": "The selected sport is not enabled.",
+      "noEnabledSports": "No sport is enabled. Please enable at least one sport first."
     },
     "slots": {
       "sport": "Sport",
@@ -288,10 +396,18 @@
       "remainingTime": "remaining",
       "beforeClosing": "before closing",
       "dayOnlyLasts": "The day only lasts",
+      "editSport": "Edit sport",
       "editSports": "Edit sports",
+      "sport": "Sport",
       "editPrice": "Edit price",
       "editCapacity": "Edit capacity",
-      "editDuration": "Edit duration"
+      "editDuration": "Edit duration",
+      "createSlot": "New slot",
+      "selectSports": "Choose sports",
+      "selectSportsDesc": "One slot will be created for each selected sport",
+      "slotsWillBeCreated": "slots will be created",
+      "slotWillBeCreated": "slot will be created",
+      "sportNotEditable": "A slot's sport cannot be changed. Delete this slot and create a new one if needed."
     },
     "generate": {
       "title": "Generate slots",
@@ -412,6 +528,10 @@
         "description": "Language displayed by default for visitors",
         "clientCanChange": "Clients can change the language on their side"
       },
+      "timeFormat": {
+        "title": "Time format",
+        "description": "Time display format (calendar, slots, etc.)"
+      },
       "smtp": {
         "title": "Email Configuration (SMTP)",
         "description": "Configure email sending for confirmations and notifications",
@@ -439,7 +559,8 @@
         "testEmail": "Send test email",
         "testEmailSent": "Test email sent!",
         "testEmailError": "Error sending email",
-        "testEmailWillBeSentTo": "A test email will be sent to:"
+        "testEmailWillBeSentTo": "A test email will be sent to:",
+        "fillAllFields": "Please fill in all SMTP configuration fields"
       },
       "workingHoursWarning": "Warning",
       "slotsOutsideHours": "will be outside the new working hours",

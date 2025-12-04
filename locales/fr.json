@@ -3,6 +3,7 @@
     "loading": "Chargement...",
     "save": "Enregistrer",
     "cancel": "Annuler",
+    "cancelShort": "✕",
     "delete": "Supprimer",
     "edit": "Modifier",
     "close": "Fermer",
@@ -24,19 +25,24 @@
     "import": "Importer",
     "icon": "Icône",
     "resetZoom": "Réinitialiser position et zoom",
-    "center": "Centrer l'image"
+    "center": "Centrer l'image",
+    "create": "Créer",
+    "error": "Erreur",
+    "unknownError": "Erreur inconnue"
   },
   "languages": {
     "fr": "Français",
     "en": "English",
     "de": "Deutsch",
+    "es": "Español",
     "it": "Italiano",
-    "es": "Español"
+    "pt": "Português",
+    "nl": "Nederlands"
   },
   "nav": {
     "home": "Accueil",
     "booking": "Réservation",
-    "admin": "Administration",
+    "admin": "Admin",
     "settings": "Paramètres",
     "logout": "Déconnexion",
     "login": "Connexion"
@@ -130,6 +136,7 @@
     },
     "summary": {
       "title": "Récapitulatif",
+      "details": "Détails de la réservation",
       "sport": "Sport",
       "date": "Date",
       "time": "Heure",
@@ -137,6 +144,9 @@
       "people": "Personnes",
       "pricePerPerson": "Prix par personne",
       "total": "Total"
+    },
+    "email": {
+      "automaticFrom": "Email automatique de"
     },
     "submit": "Confirmer la réservation",
     "submitting": "Réservation en cours...",
@@ -179,6 +189,7 @@
     "tabs": {
       "agenda": "Agenda",
       "sports": "Sports",
+      "stats": "Statistiques",
       "settings": "Paramètres"
     },
     "agenda": {
@@ -207,6 +218,99 @@
         "hours": "Heures",
         "fillRate": "Remplissage"
       },
+      "swipeToNavigate": "Glisser pour changer de jour",
+      "statsPage": {
+        "title": "Statistiques détaillées",
+        "subtitle": "Analysez vos performances",
+        "filters": {
+          "sport": "Sport",
+          "allSports": "Tous les sports",
+          "period": "Période",
+          "thisWeek": "Cette semaine",
+          "lastWeek": "Semaine dernière",
+          "thisMonth": "Ce mois",
+          "lastMonth": "Mois dernier",
+          "thisYear": "Cette année",
+          "last30Days": "30 derniers jours",
+          "last90Days": "90 derniers jours",
+          "custom": "Personnalisé",
+          "from": "Du",
+          "to": "Au"
+        },
+        "kpis": {
+          "revenue": "Chiffre d'affaires",
+          "revenueShort": "C.A.",
+          "bookings": "Réservations",
+          "bookingsShort": "Réserv.",
+          "clients": "Clients uniques",
+          "clientsShort": "Clients",
+          "occupancy": "Taux d'occupation",
+          "occupancyShort": "Remplis.",
+          "avgPerBooking": "Moyenne/réservation",
+          "avgPerBookingShort": "Moy.",
+          "totalSlots": "Créneaux totaux",
+          "totalSlotsShort": "Créneaux",
+          "bookedSlots": "Créneaux réservés",
+          "bookedSlotsShort": "Réservés",
+          "availableSlots": "Créneaux disponibles",
+          "cancelledBookings": "Annulations",
+          "totalPeople": "Personnes totales",
+          "totalPeopleShort": "Pers.",
+          "fillRate": "Remplissage"
+        },
+        "charts": {
+          "revenueOverTime": "Évolution du chiffre d'affaires",
+          "bookingsOverTime": "Évolution des réservations",
+          "bySport": "Répartition par sport",
+          "byHour": "Heures les plus populaires",
+          "byDay": "Jours de la semaine",
+          "noData": "Pas de données pour cette période"
+        },
+        "tables": {
+          "topSlots": "Créneaux les plus réservés",
+          "recentBookings": "Réservations récentes",
+          "sportComparison": "Comparaison par sport",
+          "slot": "Créneau",
+          "date": "Date",
+          "time": "Heure",
+          "sport": "Sport",
+          "bookingsCount": "Réservations",
+          "revenue": "Revenus",
+          "client": "Client",
+          "people": "Pers.",
+          "price": "Prix",
+          "bookedAt": "Réservé le"
+        },
+        "days": {
+          "mon": "Lun",
+          "tue": "Mar",
+          "wed": "Mer",
+          "thu": "Jeu",
+          "fri": "Ven",
+          "sat": "Sam",
+          "sun": "Dim"
+        },
+        "export": {
+          "button": "Exporter PDF",
+          "title": "Rapport de statistiques",
+          "summary": "Résumé (déclaration fiscale)",
+          "detailed": "Détaillé (avec réservations)",
+          "period": "Période",
+          "generatedOn": "Généré le",
+          "bookingsList": "Liste des réservations",
+          "configureExport": "Configurez votre export",
+          "exportType": "Type d'export",
+          "summaryShort": "Résumé",
+          "summaryDesc": "KPIs et répartition",
+          "detailedShort": "Détaillé",
+          "detailedDesc": "Avec réservations",
+          "currentPeriod": "Période actuelle",
+          "customPeriod": "Période personnalisée",
+          "includeSportFilter": "Inclure uniquement",
+          "generate": "Générer le PDF"
+        },
+        "refresh": "Actualiser"
+      },
       "tools": "Outils",
       "viewMode": "Vue",
       "editModeBtn": "Éditer",
@@ -220,13 +324,16 @@
       "cancelBooking": "Annuler",
       "confirmDeleteBooking": "Annuler la réservation de {{name}} ({{people}} personne(s)) ?",
       "clickToAdd": "Cliquez sur l'agenda pour ajouter un créneau",
+      "holdToAdd": "Maintenir appuyé et glisser pour créer",
       "clickToClose": "Cliquez sur un jour pour le marquer comme fermé. Recliquez pour annuler.",
+      "holdToClose": "Maintenir appuyé pour fermer le jour",
       "dragOrClick": "Cliquez ou glissez une image ici",
       "eraserMode": "Mode gomme : clic gauche pour sélectionner • clic droit pour désélectionner • maintenez et glissez",
       "closureModeActive": "Mode Fermeture actif",
       "multiplePeriod": "Période multiple",
       "closedDays": "Jours fermés",
       "closed": "FERMÉ",
+      "notWorking": "Non travaillé",
       "slotCount": "créneau",
       "slotsCount": "créneaux",
       "storageLocal": "Local",
@@ -266,7 +373,8 @@
       "willBeDeleted": "seront supprimés",
       "willBeUpdated": "seront mis à jour (sport retiré)",
       "imageUrl": "URL de l'image (optionnel)",
-      "notEnabled": "Le sport sélectionné n'est pas activé."
+      "notEnabled": "Le sport sélectionné n'est pas activé.",
+      "noEnabledSports": "Aucun sport n'est activé. Veuillez d'abord activer au moins un sport."
     },
     "slots": {
       "sport": "Sport",
@@ -288,10 +396,18 @@
       "remainingTime": "il reste",
       "beforeClosing": "avant la fermeture",
       "dayOnlyLasts": "La journée ne fait que",
+      "editSport": "Modifier le sport",
       "editSports": "Modifier les sports",
+      "sport": "Sport",
       "editPrice": "Modifier le prix",
       "editCapacity": "Modifier la capacité",
-      "editDuration": "Modifier la durée"
+      "editDuration": "Modifier la durée",
+      "createSlot": "Nouveau créneau",
+      "selectSports": "Choisir les sports",
+      "selectSportsDesc": "Un créneau sera créé pour chaque sport sélectionné",
+      "slotsWillBeCreated": "créneaux seront créés",
+      "slotWillBeCreated": "créneau sera créé",
+      "sportNotEditable": "Le sport d'un créneau ne peut pas être modifié. Supprimez ce créneau et créez-en un nouveau si besoin."
     },
     "generate": {
       "title": "Générer des créneaux",
@@ -412,6 +528,10 @@
         "description": "Langue affichée par défaut pour les visiteurs",
         "clientCanChange": "Les clients peuvent changer la langue de leur côté"
       },
+      "timeFormat": {
+        "title": "Format d'heure",
+        "description": "Format d'affichage des heures (calendrier, créneaux, etc.)"
+      },
       "smtp": {
         "title": "Configuration Email (SMTP)",
         "description": "Configurez l'envoi d'emails pour les confirmations et notifications",
@@ -439,7 +559,8 @@
         "testEmail": "Envoyer un email de test",
         "testEmailSent": "Email de test envoyé !",
         "testEmailError": "Erreur lors de l'envoi",
-        "testEmailWillBeSentTo": "Un email de test sera envoyé à :"
+        "testEmailWillBeSentTo": "Un email de test sera envoyé à :",
+        "fillAllFields": "Veuillez remplir tous les champs de configuration SMTP"
       },
       "workingHoursWarning": "Attention",
       "slotsOutsideHours": "seront hors des nouveaux horaires",

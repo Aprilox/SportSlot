@@ -3,6 +3,7 @@
     "loading": "Laden...",
     "save": "Speichern",
     "cancel": "Abbrechen",
+    "cancelShort": "✕",
     "delete": "Löschen",
     "edit": "Bearbeiten",
     "close": "Schließen",
@@ -24,14 +25,19 @@
     "import": "Importieren",
     "icon": "Symbol",
     "resetZoom": "Position und Zoom zurücksetzen",
-    "center": "Bild zentrieren"
+    "center": "Bild zentrieren",
+    "create": "Erstellen",
+    "error": "Fehler",
+    "unknownError": "Unbekannter Fehler"
   },
   "languages": {
     "fr": "Français",
     "en": "English",
     "de": "Deutsch",
+    "es": "Español",
     "it": "Italiano",
-    "es": "Español"
+    "pt": "Português",
+    "nl": "Nederlands"
   },
   "nav": {
     "home": "Startseite",
@@ -130,6 +136,7 @@
     },
     "summary": {
       "title": "Zusammenfassung",
+      "details": "Buchungsdetails",
       "sport": "Sportart",
       "date": "Datum",
       "time": "Uhrzeit",
@@ -137,6 +144,9 @@
       "people": "Personen",
       "pricePerPerson": "Preis pro Person",
       "total": "Gesamt"
+    },
+    "email": {
+      "automaticFrom": "Automatische E-Mail von"
     },
     "submit": "Buchung bestätigen",
     "submitting": "Buchung läuft...",
@@ -179,6 +189,7 @@
     "tabs": {
       "agenda": "Kalender",
       "sports": "Sportarten",
+      "stats": "Statistiken",
       "settings": "Einstellungen"
     },
     "agenda": {
@@ -207,6 +218,99 @@
         "hours": "Stunden",
         "fillRate": "Auslastung"
       },
+      "swipeToNavigate": "Wischen zum Tageswechsel",
+      "statsPage": {
+        "title": "Detaillierte Statistiken",
+        "subtitle": "Analysieren Sie Ihre Leistung",
+        "filters": {
+          "sport": "Sportart",
+          "allSports": "Alle Sportarten",
+          "period": "Zeitraum",
+          "thisWeek": "Diese Woche",
+          "lastWeek": "Letzte Woche",
+          "thisMonth": "Dieser Monat",
+          "lastMonth": "Letzter Monat",
+          "thisYear": "Dieses Jahr",
+          "last30Days": "Letzte 30 Tage",
+          "last90Days": "Letzte 90 Tage",
+          "custom": "Benutzerdefiniert",
+          "from": "Von",
+          "to": "Bis"
+        },
+        "kpis": {
+          "revenue": "Umsatz",
+          "revenueShort": "Ums.",
+          "bookings": "Buchungen",
+          "bookingsShort": "Buch.",
+          "clients": "Einzigartige Kunden",
+          "clientsShort": "Kunden",
+          "occupancy": "Auslastungsquote",
+          "occupancyShort": "Ausl.",
+          "avgPerBooking": "Durchschn./Buchung",
+          "avgPerBookingShort": "Durch.",
+          "totalSlots": "Gesamttermine",
+          "totalSlotsShort": "Termine",
+          "bookedSlots": "Gebuchte Termine",
+          "bookedSlotsShort": "Gebucht",
+          "availableSlots": "Verfügbare Termine",
+          "cancelledBookings": "Stornierungen",
+          "totalPeople": "Gesamtpersonen",
+          "totalPeopleShort": "Pers.",
+          "fillRate": "Auslastung"
+        },
+        "charts": {
+          "revenueOverTime": "Umsatzentwicklung",
+          "bookingsOverTime": "Buchungsentwicklung",
+          "bySport": "Verteilung nach Sportart",
+          "byHour": "Beliebteste Stunden",
+          "byDay": "Wochentage",
+          "noData": "Keine Daten für diesen Zeitraum"
+        },
+        "tables": {
+          "topSlots": "Meistgebuchte Termine",
+          "recentBookings": "Letzte Buchungen",
+          "sportComparison": "Sportartvergleich",
+          "slot": "Termin",
+          "date": "Datum",
+          "time": "Zeit",
+          "sport": "Sportart",
+          "bookingsCount": "Buchungen",
+          "revenue": "Umsatz",
+          "client": "Kunde",
+          "people": "Pers.",
+          "price": "Preis",
+          "bookedAt": "Gebucht am"
+        },
+        "days": {
+          "mon": "Mo",
+          "tue": "Di",
+          "wed": "Mi",
+          "thu": "Do",
+          "fri": "Fr",
+          "sat": "Sa",
+          "sun": "So"
+        },
+        "export": {
+          "button": "PDF exportieren",
+          "title": "Statistikbericht",
+          "summary": "Zusammenfassung (Steuererklärung)",
+          "detailed": "Detailliert (mit Buchungen)",
+          "period": "Zeitraum",
+          "generatedOn": "Erstellt am",
+          "bookingsList": "Buchungsliste",
+          "configureExport": "Konfigurieren Sie Ihren Export",
+          "exportType": "Exporttyp",
+          "summaryShort": "Zusammenfassung",
+          "summaryDesc": "KPIs und Verteilung",
+          "detailedShort": "Detailliert",
+          "detailedDesc": "Mit Buchungen",
+          "currentPeriod": "Aktueller Zeitraum",
+          "customPeriod": "Benutzerdefinierter Zeitraum",
+          "includeSportFilter": "Nur einschließen",
+          "generate": "PDF generieren"
+        },
+        "refresh": "Aktualisieren"
+      },
       "tools": "Werkzeuge",
       "viewMode": "Ansicht",
       "editModeBtn": "Bearbeiten",
@@ -220,13 +324,16 @@
       "cancelBooking": "Stornieren",
       "confirmDeleteBooking": "Buchung von {{name}} ({{people}} Person(en)) stornieren?",
       "clickToAdd": "Klicken Sie auf den Kalender, um einen Termin hinzuzufügen",
+      "holdToAdd": "Gedrückt halten und ziehen zum Erstellen",
       "clickToClose": "Klicken Sie auf einen Tag, um ihn als geschlossen zu markieren. Erneut klicken zum Abbrechen.",
+      "holdToClose": "Gedrückt halten um den Tag zu schließen",
       "dragOrClick": "Klicken oder ziehen Sie ein Bild hierher",
       "eraserMode": "Radierer-Modus: Linksklick zum Auswählen • Rechtsklick zum Abwählen • halten und ziehen",
       "closureModeActive": "Schließungsmodus aktiv",
       "multiplePeriod": "Mehrere Tage",
       "closedDays": "Geschlossene Tage",
       "closed": "GESCHLOSSEN",
+      "notWorking": "Kein Arbeitstag",
       "slotCount": "Termin",
       "slotsCount": "Termine",
       "storageLocal": "Lokal",
@@ -266,7 +373,8 @@
       "willBeDeleted": "werden gelöscht",
       "willBeUpdated": "werden aktualisiert (Sportart entfernt)",
       "imageUrl": "Bild-URL (optional)",
-      "notEnabled": "Die ausgewählte Sportart ist nicht aktiviert."
+      "notEnabled": "Die ausgewählte Sportart ist nicht aktiviert.",
+      "noEnabledSports": "Keine Sportart ist aktiviert. Bitte aktivieren Sie zuerst mindestens eine Sportart."
     },
     "slots": {
       "sport": "Sportart",
@@ -288,10 +396,18 @@
       "remainingTime": "verbleiben noch",
       "beforeClosing": "vor Schließung",
       "dayOnlyLasts": "Der Tag dauert nur",
+      "editSport": "Sport bearbeiten",
       "editSports": "Sportarten bearbeiten",
+      "sport": "Sport",
       "editPrice": "Preis bearbeiten",
       "editCapacity": "Kapazität bearbeiten",
-      "editDuration": "Dauer bearbeiten"
+      "editDuration": "Dauer bearbeiten",
+      "createSlot": "Neuer Termin",
+      "selectSports": "Sportarten auswählen",
+      "selectSportsDesc": "Für jede ausgewählte Sportart wird ein Termin erstellt",
+      "slotsWillBeCreated": "Termine werden erstellt",
+      "slotWillBeCreated": "Termin wird erstellt",
+      "sportNotEditable": "Die Sportart eines Termins kann nicht geändert werden. Löschen Sie diesen Termin und erstellen Sie einen neuen."
     },
     "generate": {
       "title": "Termine generieren",
@@ -412,6 +528,10 @@
         "description": "Standardmäßig für Besucher angezeigte Sprache",
         "clientCanChange": "Kunden können die Sprache selbst ändern"
       },
+      "timeFormat": {
+        "title": "Zeitformat",
+        "description": "Zeitanzeigeformat (Kalender, Termine, usw.)"
+      },
       "smtp": {
         "title": "E-Mail-Konfiguration (SMTP)",
         "description": "Konfigurieren Sie den E-Mail-Versand für Bestätigungen und Benachrichtigungen",
@@ -439,7 +559,8 @@
         "testEmail": "Test-E-Mail senden",
         "testEmailSent": "Test-E-Mail gesendet!",
         "testEmailError": "Fehler beim Senden",
-        "testEmailWillBeSentTo": "Eine Test-E-Mail wird gesendet an:"
+        "testEmailWillBeSentTo": "Eine Test-E-Mail wird gesendet an:",
+        "fillAllFields": "Bitte füllen Sie alle SMTP-Konfigurationsfelder aus"
       },
       "workingHoursWarning": "Achtung",
       "slotsOutsideHours": "werden außerhalb der neuen Arbeitszeiten liegen",

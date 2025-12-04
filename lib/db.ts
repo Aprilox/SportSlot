@@ -326,7 +326,7 @@ export async function getSlotsFromDB(): Promise<TimeSlot[] | null> {
   return withPrisma(async (prisma) => {
     try {
       const slots = await prisma.timeSlot.findMany({
-        include: { sports: true },
+        include: { sport: true },
         orderBy: [{ date: 'asc' }, { time: 'asc' }]
       })
       
@@ -338,7 +338,7 @@ export async function getSlotsFromDB(): Promise<TimeSlot[] | null> {
         maxCapacity: s.maxCapacity,
         currentBookings: s.currentBookings,
         price: s.price,
-        sportIds: s.sports.map(sp => sp.id),
+        sportId: s.sportId,
         published: s.published,
         outsideWorkingHours: s.outsideWorkingHours,
         // Champs pour les modifications non publiées
@@ -371,10 +371,13 @@ export async function saveSlotsToDB(slots: TimeSlot[]): Promise<boolean> {
         // Supprimer tous les slots existants
         await tx.timeSlot.deleteMany()
         
-        // Créer les nouveaux avec leurs relations sports
+        // Créer les nouveaux avec leur relation sport (1 sport par créneau)
         for (const slot of slots) {
-          // Filtrer les sportIds pour ne garder que ceux qui existent
-          const validSportIds = slot.sportIds.filter(id => existingSportIds.has(id))
+          // Vérifier que le sportId existe
+          if (!existingSportIds.has(slot.sportId)) {
+            console.warn(`Sport ${slot.sportId} n'existe pas, slot ignoré`)
+            continue
+          }
           
           await tx.timeSlot.create({
             data: {
@@ -391,9 +394,7 @@ export async function saveSlotsToDB(slots: TimeSlot[]): Promise<boolean> {
               originalDate: slot.originalDate || null,
               originalTime: slot.originalTime || null,
               originalDuration: slot.originalDuration || null,
-              sports: validSportIds.length > 0 ? {
-                connect: validSportIds.map(id => ({ id }))
-              } : undefined
+              sportId: slot.sportId
             }
           })
         }

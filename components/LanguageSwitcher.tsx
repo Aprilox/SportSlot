@@ -36,6 +36,33 @@ const Flag = ({ code, className = "w-5 h-4" }: { code: string; className?: strin
         <path fill="#FFCE00" d="M0 320h640v160H0z"/>
       </svg>
     ),
+    es: (
+      <svg className={className} viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#AA151B" d="M0 0h640v480H0z"/>
+        <path fill="#F1BF00" d="M0 120h640v240H0z"/>
+      </svg>
+    ),
+    it: (
+      <svg className={className} viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#009246" d="M0 0h213.3v480H0z"/>
+        <path fill="#fff" d="M213.3 0h213.4v480H213.3z"/>
+        <path fill="#ce2b37" d="M426.7 0H640v480H426.7z"/>
+      </svg>
+    ),
+    pt: (
+      <svg className={className} viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#006600" d="M0 0h256v480H0z"/>
+        <path fill="#FF0000" d="M256 0h384v480H256z"/>
+        <circle fill="#FFCC00" cx="256" cy="240" r="80"/>
+      </svg>
+    ),
+    nl: (
+      <svg className={className} viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#21468B" d="M0 0h640v480H0z"/>
+        <path fill="#FFF" d="M0 0h640v320H0z"/>
+        <path fill="#AE1C28" d="M0 0h640v160H0z"/>
+      </svg>
+    ),
   };
 
   return flags[code] || <span className="text-xs font-bold">{code.toUpperCase()}</span>;
