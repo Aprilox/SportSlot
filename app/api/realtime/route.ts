@@ -16,6 +16,8 @@ import { isDatabaseMode, getStorageMode } from '@/lib/config'
  * - version: version actuelle du client (si différente, retourne les nouvelles données)
  * - full: si true, retourne toujours les données complètes
  */
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
