@@ -9,6 +9,8 @@ import { NextResponse } from 'next/server'
 import { healthCheck } from '@/lib/prisma'
 import { config } from '@/lib/config'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   try {
     const dbHealth = await healthCheck()
