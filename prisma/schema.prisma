@@ -1,0 +1,149 @@
+// ===========================================
+// SPORTSLOT - Schéma de base de données
+// ===========================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite" // Changer pour "postgresql" ou "mysql" en production
+  url      = env("DATABASE_URL")
+}
+
+// ===========================================
+// AUTHENTIFICATION
+// ===========================================
+
+model AdminCredentials {
+  id        String   @id @default("admin")
+  username  String   @default("admin")
+  password  String   // Hashé avec bcrypt
+  updatedAt DateTime @updatedAt
+}
+
+// ===========================================
+// SPORTS
+// ===========================================
+
+model Sport {
+  id       String  @id @default(uuid())
+  name     String
+  enabled  Boolean @default(true)
+  icon     String  @default("🏆")
+  imageUrl String?
+  order    Int     @default(0)
+  
+  // Relation one-to-many : un sport peut avoir plusieurs créneaux
+  slots    TimeSlot[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ===========================================
+// CRÉNEAUX
+// ===========================================
+
+model TimeSlot {
+  id              String   @id @default(uuid())
+  date            String   // Format: YYYY-MM-DD
+  time            String   // Format: HH:MM
+  duration        Int      // En minutes
+  maxCapacity     Int
+  currentBookings Int      @default(0)
+  price           Float
+  published       Boolean  @default(false) // true = visible pour les clients
+  outsideWorkingHours Boolean @default(false) // true = hors horaires de travail
+  
+  // Champs pour les modifications non publiées (déplacement/redimensionnement)
+  // Ces valeurs sont utilisées côté client tant que non publié
+  originalDate     String?  // Date originale avant déplacement
+  originalTime     String?  // Heure originale avant déplacement
+  originalDuration Int?     // Durée originale avant redimensionnement
+  
+  // Relation one-to-one avec Sport (1 créneau = 1 sport)
+  sportId  String
+  sport    Sport    @relation(fields: [sportId], references: [id], onDelete: Cascade)
+  
+  // Réservations
+  bookings Booking[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([date])
+  @@index([date, time])
+  @@index([published])
+  @@index([sportId])
+}
+
+// ===========================================
+// RÉSERVATIONS
+// ===========================================
+
+model Booking {
+  id             String   @id @default(uuid())
+  customerName   String
+  customerEmail  String
+  customerPhone  String   @default("") // Numéro de téléphone
+  numberOfPeople Int
+  totalPrice     Float
+  sportId        String   @default("") // ID du sport réservé
+  sportName      String   // Nom du sport (dénormalisé pour l'historique)
+  date           String
+  time           String
+  status         String   @default("confirmed") // confirmed, cancelled
+  
+  // Relations
+  slotId String
+  slot   TimeSlot @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([customerEmail])
+  @@index([date])
+  @@index([status])
+}
+
+// ===========================================
+// PARAMÈTRES
+// ===========================================
+
+model Settings {
+  id                  String @id @default("main")
+  defaultSlotDuration Int    @default(60)
+  defaultMaxCapacity  Int    @default(4)
+  defaultPrice        Float  @default(50)
+  minBookingAdvance   Int    @default(0) // Délai minimum de réservation en minutes
+  dataVersion         Int    @default(0) // Version pour synchronisation
+  
+  // Branding (JSON stocké comme texte)
+  branding String @default("{}")
+  
+  // Horaires de travail (JSON)
+  workingHours String @default("[]")
+  
+  // Périodes de fermeture (JSON)
+  closedPeriods String @default("[]")
+  
+  // Configuration SMTP (JSON)
+  smtp String @default("{}")
+  
+  updatedAt DateTime @updatedAt
+}
+
+// ===========================================
+// PÉRIODES DE FERMETURE (table séparée pour requêtes)
+// ===========================================
+
+model ClosedPeriod {
+  id        String   @id @default(uuid())
+  startDate String   // Format: YYYY-MM-DD
+  endDate   String   // Format: YYYY-MM-DD
+  reason    String?
+  published Boolean  @default(false)
+  
+  createdAt DateTime @default(now())
+}
